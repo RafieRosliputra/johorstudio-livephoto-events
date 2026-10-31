@@ -25,6 +25,8 @@ services:
       ACCESS_AUD: 0a2674c993f1beec5a154842827963543acb1639ce753bae7140baadcf24eecb
       ADMIN_EMAILS: rafierosliputra@gmail.com,johorstudio@gmail.com
       MODERATOR_URL: http://moderator:8096
+      # Umami (ana.johorstudio.com) website "JS Live Photo", public pages only
+      UMAMI_WEBSITE_ID: 30b80808-24b1-48a2-b771-cf1592ee8ba2
     ports:
       - "8095:8095"   # Cloudflare tunnel m10: live.johorstudio.com -> http://192.168.0.100:8095
     volumes:
