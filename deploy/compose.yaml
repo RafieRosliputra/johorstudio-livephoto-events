@@ -1,0 +1,71 @@
+# TrueNAS custom app "livephoto" on m10 (live.johorstudio.com)
+# Code:   /mnt/ssd/livephoto/app      (git clone of this repo, read-only in the container)
+# Data:   /mnt/ssd/livephoto/data     (SQLite DB, thumbnails, upload parts' thumbs)
+# Photos: /mnt/tnas-livephoto         (NFS from tnas:/mnt/ssd/client-1month/livephoto over Tailscale)
+# Secrets (Google client ID, mail API key) live in /mnt/ssd/livephoto/livephoto.env, never in git.
+services:
+  livephoto:
+    image: node:24-alpine
+    container_name: livephoto
+    user: "568:568"
+    working_dir: /app/server
+    command: node src/server.js
+    env_file:
+      - /mnt/ssd/livephoto/livephoto.env
+    environment:
+      TZ: Asia/Kuala_Lumpur
+      NODE_ENV: production
+      PORT: "8095"
+      DATA_DIR: /data
+      PHOTOS_DIR: /photos
+      REQUIRE_STORAGE_MARKER: "1"
+      PUBLIC_URL: https://live.johorstudio.com
+      # Admin login = Cloudflare Access app "JS Live Photo Admin" (live.johorstudio.com/admin + /api/admin)
+      ACCESS_TEAM_DOMAIN: johorstudio.cloudflareaccess.com
+      ACCESS_AUD: 0a2674c993f1beec5a154842827963543acb1639ce753bae7140baadcf24eecb
+      ADMIN_EMAILS: rafierosliputra@gmail.com,johorstudio@gmail.com
+      MODERATOR_URL: http://moderator:8096
+    ports:
+      - "8095:8095"   # Cloudflare tunnel m10: live.johorstudio.com -> http://192.168.0.100:8095
+    volumes:
+      - /mnt/ssd/livephoto/app:/app:ro
+      - /mnt/ssd/livephoto/data:/data
+      # rslave: if the NFS mount comes back after the app started, the container sees it
+      - type: bind
+        source: /mnt/tnas-livephoto
+        target: /photos
+        bind:
+          propagation: rslave
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8095/auth/config"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      - moderator
+    restart: unless-stopped
+
+  # AI check for guest photos (NSFW, politics, documents/text, violence...). CPU only, models cached on m10.
+  moderator:
+    image: python:3.11-slim
+    container_name: livephoto-moderator
+    user: "568:568"
+    working_dir: /app/moderator
+    command: sh -c "pip install --no-cache-dir -q --user -r requirements.txt && exec python -u app.py"
+    environment:
+      TZ: Asia/Kuala_Lumpur
+      HOME: /models
+      HF_HOME: /models/hf
+      PHOTOS_DIR: /photos
+      PORT: "8096"
+      THREADS: "4"
+    volumes:
+      - /mnt/ssd/livephoto/app:/app:ro
+      - /mnt/ssd/livephoto/models:/models
+      - type: bind
+        source: /mnt/tnas-livephoto
+        target: /photos
+        read_only: true
+        bind:
+          propagation: rslave
+    restart: unless-stopped
