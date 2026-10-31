@@ -13,7 +13,7 @@ import * as auth from './auth.js';
 import * as storage from './storage.js';
 import { sniff, imageSizeOfFile, stripWebpMetadata } from './imageinfo.js';
 import { subscribe, publish, publishPhoto, setPhotoSerializer, viewerCount } from './live.js';
-import { checkPhoto } from './moderation.js';
+import { findFaces, checkPhoto } from './moderation.js';
 import { apkInfo, refreshApk, sendApk } from './apk.js';
 import { Router, HttpError, fail, sendJson, readJson, readBody, clientIp, randomToken, shortToken, uuid } from './http.js';
 
@@ -31,9 +31,10 @@ const guestIpLimit = (() => {
 
 // ---------------- serializers ----------------
 export function photoJson(p) {
-  let flags = [];
+  let flags = [], fc;
   try { flags = JSON.parse(p.flags || '[]'); } catch { /* ignore */ }
-  return { id: p.id, seq: p.seq, w: p.width, h: p.height, src: p.source, slot: p.slot, by: p.uploader || '', t: p.created_at,
+  try { if (p.faces && p.faces !== '[]') fc = JSON.parse(p.faces); } catch { /* ignore */ }
+  return { fc, id: p.id, seq: p.seq, w: p.width, h: p.height, src: p.source, slot: p.slot, by: p.uploader || '', t: p.created_at,
     th: p.thumbs, hidden: !!p.hidden, status: p.status, flags, name: path.posix.basename(p.rel_path) };
 }
 setPhotoSerializer(photoJson);
@@ -295,7 +296,7 @@ r('POST', '/api/uploads/:id/complete', (req, res, { params }) => {
   if (up.dup_key) db.addSentKey(ev.id, up.dup_key, photo.id);
   if (guest && up.session_id) db.bumpUploads(up.session_id);
   publishPhoto(photo);
-  if (guest) checkPhoto(photo);
+  if (guest) checkPhoto(photo); else findFaces(photo);
   sendJson(res, 200, { photo: photoJson(photo) });
 });
 r('DELETE', '/api/uploads/:id', (req, res, { params }) => {

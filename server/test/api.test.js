@@ -23,6 +23,7 @@ const aux = http.createServer(async (req, res) => {
     modCalls++;
     return res.end(JSON.stringify(modVerdict(JSON.parse(b))));
   }
+  if (req.url === '/faces') { for await (const _ of req); return res.end(JSON.stringify({ faces: [[0.4, 0.2, 0.5, 0.35]] })); }
   res.statusCode = 404; res.end();
 });
 await new Promise((r) => aux.listen(0, '127.0.0.1', r));
@@ -184,6 +185,10 @@ test('photographer: code + name -> Photographer N, upload is approved without AI
   assert.equal(up.status, 200); assert.equal(up.body.photo.status, 'approved'); assert.equal(up.body.photo.by, 'Aiman');
   assert.equal(modCalls, before);
   assert.ok(fs.existsSync(path.join(process.env.PHOTOS_DIR, 'EVENTS', ev.folder, 'Photographer 1', 'DSC01234.webp')));
+  // faces found by the moderator come with the photo (big screen zooms towards them)
+  await wait(150);
+  const withFaces = (await A('GET', `/api/admin/events/${ev.id}/photos`)).body.photos.find((p) => p.id === up.body.photo.id);
+  assert.deepEqual(withFaces.fc, [[0.4, 0.2, 0.5, 0.35]]);
   // same original file again (name|size|time taken): not stored twice; resumed when cut off halfway
   const key = 'DSC01235.JPG|8123456|1761955200000';
   const first = await upload(photog, '/api/shoot/uploads', fakeWebp(6000, 4000, 5000), { name: 'DSC01235.webp', key });

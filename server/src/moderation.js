@@ -60,18 +60,49 @@ export async function checkPhoto(photo) {
     if (!fresh || fresh.status !== 'pending') return; // a person decided meanwhile
     const flags = [...labels, ...nameFlag];
     const st = verdict === 'block' ? 'blocked' : verdict === 'flag' || nameFlag.length ? 'flagged' : 'approved';
-    publishPhoto(db.setPhotoStatus(photo.id, st, flags));
+    const out = db.setPhotoStatus(photo.id, st, flags);
+    publishPhoto(out);
+    if (st === 'approved') findFaces(out);
   } finally {
     running.delete(photo.id);
   }
 }
 
-// Retry loop for photos still pending (moderator was down, server restarted...).
-let timer;
+// Faces for the big screen (zoom / pan towards people). Any approved photo, photographer or guest.
+// The photo is published again with its face boxes; the screen uses them when it shows the photo.
+const faceRunning = new Set(), faceFails = new Map();
+export async function findFaces(photo) {
+  if (!config.moderatorUrl || faceRunning.has(photo.id) || faceRunning.size >= 3) return;
+  faceRunning.add(photo.id);
+  try {
+    const ev = db.getEvent(photo.event_id);
+    if (!ev) return;
+    const rel = path.relative(config.photosDir, path.join(eventDir(ev), photo.rel_path));
+    const r = await fetch(`${config.moderatorUrl}/faces`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: rel }), signal: AbortSignal.timeout(30000) });
+    if (r.status === 404) { db.setFaces(photo.id, []); return; }
+    if (!r.ok) throw new Error(`faces ${r.status}`);
+    const { faces } = await r.json();
+    const clean = (Array.isArray(faces) ? faces : []).slice(0, 12).filter((b) => Array.isArray(b) && b.length === 4 && b.every((v) => v >= 0 && v <= 1));
+    const out = db.setFaces(photo.id, clean);
+    if (clean.length && out) publishPhoto(out);
+  } catch (e) {
+    const n = (faceFails.get(photo.id) || 0) + 1;
+    faceFails.set(photo.id, n);
+    if (n >= 3) { db.setFaces(photo.id, []); faceFails.delete(photo.id); }
+  } finally {
+    faceRunning.delete(photo.id);
+  }
+}
+
+// Retry loop for photos still pending (moderator was down, server restarted...), and faces not checked yet.
+let timer, faceTimer;
 export function startModeration() {
   const tick = () => { for (const p of db.pendingPhotos(10)) checkPhoto(p); };
   timer = setInterval(tick, 15000);
   timer.unref();
   setTimeout(tick, 2000).unref();
+  faceTimer = setInterval(() => { if (config.moderatorUrl) for (const p of db.photosNeedingFaces(3)) findFaces(p); }, 2000);
+  faceTimer.unref();
 }
-export const stopModeration = () => clearInterval(timer);
+export const stopModeration = () => { clearInterval(timer); clearInterval(faceTimer); };

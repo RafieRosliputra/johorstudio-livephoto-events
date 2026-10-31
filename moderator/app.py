@@ -3,6 +3,8 @@
 Runs on m10 next to the livephoto app (CPU only, photos never leave the server).
   POST /check {"path": "EVENTS/<event>/public upload/guest-....webp"}
        -> {"verdict": "ok|flag|block", "labels": [...], "scores": {...}, "ms": 1234}
+  POST /faces {"path": "..."} -> {"faces": [[x0, y0, x1, y1], ...] (0..1 of width/height), "ms": 12}
+       (any photo; the big screen zooms and pans towards faces)
   GET  /health
 Models (downloaded once into $HF_HOME):
   NSFW  Falconsai/nsfw_image_detection   (image classifier: normal / nsfw)
@@ -55,6 +57,34 @@ def text_share(img):
     return min(1.0, area / float(small.width * small.height))
 
 
+face_lock = threading.Lock()
+_cascade = []
+
+
+def faces(rel):
+    """Frontal faces with OpenCV's Haar cascade: fast on CPU, good enough to aim a slow zoom."""
+    import cv2
+    import numpy as np
+    path = (PHOTOS / rel).resolve()
+    if PHOTOS not in path.parents or not path.is_file():
+        raise FileNotFoundError(rel)
+    t = time.time()
+    with Image.open(path) as im:
+        img = ImageOps.exif_transpose(im).convert("L")
+    img.thumbnail((1024, 1024))
+    w, h = img.size
+    gray = cv2.equalizeHist(np.asarray(img))
+    with face_lock:
+        if not _cascade:
+            # file shipped next to this script (OpenCV 4.10 data, Intel licence in the file), so any cv2 build works
+            _cascade.append(cv2.CascadeClassifier(str(Path(__file__).with_name("haarcascade_frontalface_default.xml"))))
+        m = max(24, int(min(w, h) * 0.035))
+        found = _cascade[0].detectMultiScale(gray, scaleFactor=1.1, minNeighbors=6, minSize=(m, m))
+    out = [[round(float(x) / w, 3), round(float(y) / h, 3), round(float(x + fw) / w, 3), round(float(y + fh) / h, 3)] for (x, y, fw, fh) in found]
+    out.sort(key=lambda b: -(b[2] - b[0]) * (b[3] - b[1]))
+    return {"faces": out[:12], "ms": int((time.time() - t) * 1000)}
+
+
 def check(rel):
     path = (PHOTOS / rel).resolve()
     if PHOTOS not in path.parents or not path.is_file():
@@ -92,6 +122,15 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(404, {"error": "not found"})
 
     def do_POST(self):
+        if self.path == "/faces":
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get("content-length") or 0)) or b"{}")
+                return self.reply(200, faces(str(body.get("path", ""))))
+            except FileNotFoundError:
+                return self.reply(404, {"error": "photo not found"})
+            except Exception as e:  # noqa: BLE001
+                print("faces error:", repr(e), flush=True)
+                return self.reply(500, {"error": str(e)})
         if self.path != "/check":
             return self.reply(404, {"error": "not found"})
         if not models:

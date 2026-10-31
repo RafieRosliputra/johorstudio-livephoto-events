@@ -129,6 +129,8 @@ export function openDb(file = path.join(config.dataDir, 'livephoto.db')) {
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
   db.exec(SCHEMA);
   try { db.exec("ALTER TABLE uploads ADD COLUMN dup_key TEXT NOT NULL DEFAULT ''"); } catch { /* already there */ }
+  // face boxes for the big screen: '' = not checked yet, '[]' = none found
+  try { db.exec("ALTER TABLE photos ADD COLUMN faces TEXT NOT NULL DEFAULT ''"); } catch { /* already there */ }
   db.prepare("INSERT OR IGNORE INTO meta(key,value) VALUES('schema',?)").run(String(SCHEMA_VERSION));
   return db;
 }
@@ -348,3 +350,7 @@ export const openUploadsFor = (sessionId) => q('SELECT COUNT(*) AS n FROM upload
 export const sentKey = (eventId, key) => q('SELECT * FROM sent_keys WHERE event_id=? AND key=?').get(eventId, key);
 export const addSentKey = (eventId, key, photoId) => q('INSERT OR REPLACE INTO sent_keys(event_id,key,photo_id,created_at) VALUES(?,?,?,?)').run(eventId, key, photoId, now());
 export const openUploadByKey = (eventId, key) => q("SELECT * FROM uploads WHERE event_id=? AND dup_key=? AND dup_key<>'' ORDER BY created_at DESC LIMIT 1").get(eventId, key);
+
+// ---------------- faces (big screen zoom target) ----------------
+export const photosNeedingFaces = (limit = 5) => q("SELECT * FROM photos WHERE faces='' AND status='approved' ORDER BY seq DESC LIMIT ?").all(limit);
+export function setFaces(id, faces) { q('UPDATE photos SET faces=? WHERE id=?').run(JSON.stringify(faces || []), id); return getPhoto(id); }
