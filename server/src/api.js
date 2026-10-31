@@ -14,6 +14,7 @@ import * as storage from './storage.js';
 import { sniff, imageSizeOfFile, stripWebpMetadata } from './imageinfo.js';
 import { subscribe, publish, publishPhoto, setPhotoSerializer, viewerCount } from './live.js';
 import { checkPhoto } from './moderation.js';
+import { apkInfo, refreshApk, sendApk } from './apk.js';
 import { Router, HttpError, fail, sendJson, readJson, readBody, clientIp, randomToken, shortToken, uuid } from './http.js';
 
 export const router = new Router();
@@ -178,6 +179,14 @@ r('POST', '/api/shoot/uploads', async (req, res) => {
   const { session, event } = auth.requireSession(req, 'photographer');
   const body = await readJson(req);
   startUpload(res, event, { source: 'photographer', slot: session.slot, sessionId: session.id, uploader: session.name, name: body.name, size: body.size, ip: clientIp(req) });
+});
+// JS Tether APK, only for signed-in photographers (and admins below).
+const apkJson = (m) => (m ? { name: m.name, version: m.version, size: m.size, tag: m.tag, published: m.published } : null);
+r('GET', '/api/shoot/app', (req, res) => { auth.requireSession(req, 'photographer'); sendJson(res, 200, { apk: apkJson(apkInfo()) }); });
+r('GET', '/api/shoot/app.apk', (req, res) => {
+  auth.requireSession(req, 'photographer');
+  const m = apkInfo(); if (!m) fail(404, 'The app is not available yet');
+  sendApk(req, res, m);
 });
 // Old v3 app route, kept so a v3 app gets a clear message.
 r('POST', '/api/events/:id/uploads', () => fail(426, 'Update JS Tether: this event uses photographer codes now'));
@@ -488,6 +497,9 @@ A('PUT', '/events/:id/photos/:photo/thumb/:size', async (req, res, { params }) =
   db.addPhotoThumb(p.id, bit);
   sendJson(res, 200, { ok: true });
 });
+A('GET', '/app', (req, res) => sendJson(res, 200, { apk: apkJson(apkInfo()) }));
+A('POST', '/app/refresh', async (req, res) => sendJson(res, 200, { apk: apkJson(await refreshApk()) }));
+A('GET', '/app.apk', (req, res) => { const m = apkInfo(); if (!m) fail(404, 'The app is not available yet'); sendApk(req, res, m); });
 A('GET', '/status', (req, res) => sendJson(res, 200, { storageOnline: storage.storageOnline(), photosDir: config.photosDir, moderator: config.moderatorUrl || null, scan: storage.scanAll() }));
 
 // ---------------- image serving ----------------

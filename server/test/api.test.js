@@ -16,6 +16,8 @@ const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'k1', alg: 'RS256' };
 let modCalls = 0, modVerdict = () => ({ verdict: 'ok', labels: [] });
 const aux = http.createServer(async (req, res) => {
   if (req.url === '/certs') return res.end(JSON.stringify({ keys: [jwk] }));
+  if (req.url === '/releases') return res.end(JSON.stringify([{ tag_name: 'jstether-v4.0', name: 'JS Tether 4.0', assets: [{ id: 7, name: 'JSTether-v4.0.apk', updated_at: 'x', browser_download_url: `${auxUrl}/apk` }] }]));
+  if (req.url === '/apk') return res.end(Buffer.concat([Buffer.from('PK'), Buffer.alloc(3000)]));
   if (req.url === '/check') {
     let b = ''; for await (const c of req) b += c;
     modCalls++;
@@ -30,7 +32,7 @@ Object.assign(process.env, {
   DATA_DIR: path.join(tmp, 'data'), PHOTOS_DIR: path.join(tmp, 'photos'), COOKIE_SECURE: '0', PUBLIC_URL: 'http://localhost',
   SCAN_INTERVAL: '3600', ACCESS_AUD: 'aud-livephoto', ACCESS_TEAM_DOMAIN: 'johorstudio.cloudflareaccess.com',
   ACCESS_CERTS_URL: `${auxUrl}/certs`, ADMIN_EMAILS: 'rafierosliputra@gmail.com,johorstudio@gmail.com',
-  MODERATOR_URL: auxUrl, GUEST_UPLOADS_PER_EVENT: '3',
+  MODERATOR_URL: auxUrl, GUEST_UPLOADS_PER_EVENT: '3', APK_RELEASES_URL: `${auxUrl}/releases`,
 });
 const { handler } = await import('../src/server.js');
 const db = await import('../src/db.js');
@@ -185,6 +187,18 @@ test('photographer: code + name -> Photographer N, upload is approved without AI
   // admin moves Aiman to slot 3; his session follows
   await A('POST', `/api/admin/events/${ev.id}/slots`, { body: { from: 1, to: 3 } });
   assert.equal((await photog('GET', '/api/shoot')).body.slot, 3);
+});
+
+test('APK download only after login (photographer / admin)', async () => {
+  assert.equal((await stranger('GET', '/api/shoot/app.apk')).status, 401);
+  assert.equal((await admin('GET', '/api/admin/app.apk')).status, 401);
+  const r = await A('POST', '/api/admin/app/refresh');
+  assert.equal(r.body.apk.version, '4.0');
+  const a = await A('GET', '/api/admin/app.apk');
+  assert.equal(a.status, 200); assert.equal(a.headers.get('content-type'), 'application/vnd.android.package-archive');
+  assert.equal((await photog('GET', '/api/shoot/app')).body.apk.name, 'JSTether-v4.0.apk');
+  const p = await photog('GET', '/api/shoot/app.apk');
+  assert.equal(p.status, 200); assert.equal(p.body.length, 3002);
 });
 
 test('organiser panel: review queue, allow / remove, request to close', async () => {

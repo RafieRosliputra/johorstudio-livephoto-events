@@ -9,6 +9,7 @@ import { router } from './api.js';
 import { HttpError, sendJson } from './http.js';
 import { startScanner, stopScanner } from './storage.js';
 import { startModeration, stopModeration } from './moderation.js';
+import { startApkSync, stopApkSync } from './apk.js';
 
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public');
 const TYPES = {
@@ -75,12 +76,13 @@ export function start() {
   db.openDb();
   startScanner();
   startModeration();
+  startApkSync();
   const server = http.createServer(handler);
   server.requestTimeout = 0;           // long SSE streams and slow 4G chunk uploads
   server.headersTimeout = 60000;
   server.keepAliveTimeout = 65000;
   server.listen(config.port, config.host, () => console.log(`JS Live Photo on http://${config.host}:${config.port} (photos: ${config.photosDir})`));
-  const stop = () => { stopScanner(); stopModeration(); server.close(); db.closeDb(); process.exit(0); };
+  const stop = () => { stopScanner(); stopModeration(); stopApkSync(); server.close(); db.closeDb(); process.exit(0); };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
   return server;

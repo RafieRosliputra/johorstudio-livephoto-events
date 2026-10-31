@@ -55,6 +55,7 @@
   .qrwrap img { width: min(360px, 80vw); image-rendering: pixelated; }
   .qrwrap .big { font-size: 56px; font-weight: 800; font-stretch: 80%; letter-spacing: .08em; font-variant-numeric: tabular-nums; }
   .modal-box.wide { max-width: 560px; }
+  .apkcard { border: 1px solid var(--mist); background: #fff; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
   .empty-state { padding: 30px 16px; text-align: center; color: var(--steel); }
 </style>
 </head>
@@ -71,6 +72,10 @@
     <aside class="elist">
       <div class="elist-head"><h1 style="margin:0;font-size:20px">EVENTS</h1><button class="btn small" id="newBtn">+ New event</button></div>
       <p class="small muted" style="margin:0" id="liveNote"></p>
+      <div class="apkcard hidden" id="apkCard">
+        <div><b>JS Tether app</b> <span class="small muted" id="apkVer"></span></div>
+        <div class="row"><a class="btn small" href="/api/admin/app.apk" download id="apkDl">Download APK</a><button class="btn small ghost" id="apkRefresh">Check for update</button></div>
+      </div>
       <div id="elist" style="display:flex;flex-direction:column;gap:8px"></div>
     </aside>
     <section class="detail" id="detail"><div class="card empty-state">Choose an event, or create a new one.</div></section>
@@ -112,6 +117,13 @@ async function start() {
   if (!me.storageOnline) banner('red', 'Storage is offline (the server cannot reach tnas). Uploads are paused; the app keeps photos on the phone and retries.');
   await loadEvents();
   setInterval(loadEvents, 30000);
+  showApk(await api('GET', '/api/admin/app').catch(() => ({})));
+  $('#apkRefresh').onclick = async () => { $('#apkRefresh').disabled = true; const r = await api('POST', '/api/admin/app/refresh').catch((e) => { toast(e.message); return {}; }); showApk(r); toast(r.apk ? `JS Tether ${r.apk.version} is the newest` : 'No APK found in GitHub Releases'); $('#apkRefresh').disabled = false; };
+}
+function showApk(d) {
+  $('#apkCard').classList.remove('hidden');
+  if (d && d.apk) { $('#apkVer').textContent = `${d.apk.version} · ${Math.max(1, Math.round(d.apk.size / 1024))} KB`; $('#apkDl').classList.remove('hidden'); }
+  else { $('#apkVer').textContent = 'not downloaded yet'; $('#apkDl').classList.add('hidden'); }
 }
 function banner(kind, text) { const d = document.createElement('div'); d.className = `banner ${kind}`; d.textContent = text; $('#banners').appendChild(d); }
 

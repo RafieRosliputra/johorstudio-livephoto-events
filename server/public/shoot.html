@@ -20,6 +20,7 @@
   .kv dt { color: var(--steel); }
   .kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
   .app-btn { background: var(--graphite); }
+  .apk { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--mist); padding-top: 12px; }
 </style>
 </head>
 <body>
@@ -44,6 +45,10 @@
       <dt>Gallery</dt><dd><a id="gallery" target="_blank" rel="noopener"></a></dd>
     </dl>
     <a class="btn app-btn hidden" id="appBtn">Return to app</a>
+    <div class="apk hidden" id="apkBox">
+      <a class="btn ghost" id="apkBtn" href="/api/shoot/app.apk" download>Download JS Tether app (Android)</a>
+      <p class="small muted" style="margin:0">For Android phones tethered to the camera. Install it, then sign in with the same photographer code and name.</p>
+    </div>
     <button class="btn" id="up">Upload photos from this phone</button>
     <div class="hidden" id="prog" style="display:flex;flex-direction:column;gap:6px">
       <div class="progress"><div id="bar"></div></div><div class="small muted" id="step"></div>
@@ -93,6 +98,11 @@ async function show() {
   $('#until').textContent = new Date(me.event.endsAt).toLocaleString('en-GB', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
   $('#gallery').href = me.event.url; $('#gallery').textContent = me.event.url.replace(/^https?:\/\//, '');
   // Back to JS Tether with the session token (only when the app opened this page).
+  api('GET', '/api/shoot/app').then(({ apk }) => {
+    if (!apk || fromApp) return;
+    $('#apkBtn').textContent = `Download JS Tether ${apk.version} (Android, ${Math.max(1, Math.round(apk.size / 1024))} KB)`;
+    $('#apkBox').classList.remove('hidden');
+  }).catch(() => {});
   if (fromApp && appToken) { $('#appBtn').classList.remove('hidden'); $('#appBtn').href = `jstether://auth?token=${encodeURIComponent(appToken)}`; }
 }
 $('#out').onclick = async () => { await api('POST', '/auth/logout', { role: 'photographer' }); try { sessionStorage.removeItem('lp-app-token'); } catch {} location.reload(); };

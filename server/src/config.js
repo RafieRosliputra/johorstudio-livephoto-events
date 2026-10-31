@@ -33,6 +33,8 @@ export const config = {
   maxUploadBytes: Number(env.MAX_UPLOAD_MB || 80) * 1024 * 1024,
   maxGuestBytes: Number(env.MAX_GUEST_MB || 40) * 1024 * 1024,
   guestUploadsPerHour: Number(env.GUEST_UPLOADS_PER_HOUR || 300),
+  // JS Tether APK: newest .apk in the app repo's GitHub Releases (public repo, no token).
+  apkReleasesUrl: env.APK_RELEASES_URL ?? 'https://api.github.com/repos/RafieRosliputra/a7rii-android-push/releases?per_page=10',
   whatsapp: env.WHATSAPP || '60127983745',
   contactUrl: env.CONTACT_URL || 'https://johorstudio.com/#contact',
 };
