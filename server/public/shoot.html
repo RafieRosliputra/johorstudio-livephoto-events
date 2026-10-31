@@ -117,7 +117,31 @@ $('#out').onclick = async () => { await api('POST', '/auth/logout', { role: 'pho
 // Web upload: full-resolution WebP 80% (photographer quality), straight to Photographer N.
 // Each file gets a key (name|size|time) so the server skips photos already sent.
 let busy = false, items = [];
-const keyOf = (f) => `${f.name}|${f.size}|${f.lastModified || 0}`;
+// name|size|EXIF time taken (or m<last modified>): the same key JS Tether makes for the same file.
+async function exifTaken(file) {
+  try {
+    const v = new DataView(await file.slice(0, 262144).arrayBuffer());
+    if (v.getUint16(0) !== 0xFFD8) return null;
+    let o = 2;
+    while (o + 4 < v.byteLength) {
+      const m = v.getUint16(o), len = v.getUint16(o + 2);
+      if (m === 0xFFE1 && v.getUint32(o + 4) === 0x45786966) { // "Exif"
+        const t = o + 10, le = v.getUint16(t) === 0x4949;
+        const u16 = (x) => v.getUint16(t + x, le), u32 = (x) => v.getUint32(t + x, le);
+        const find = (ifd, tag) => { const n = u16(ifd); for (let i = 0; i < n; i++) { const e = ifd + 2 + i * 12; if (u16(e) === tag) return e; } return -1; };
+        const ptr = find(u32(4), 0x8769); if (ptr < 0) return null;
+        const e = find(u32(ptr + 8), 0x9003); if (e < 0) return null;
+        const at = t + u32(e + 8);
+        let str = ''; for (let i = 0; i < 19; i++) str += String.fromCharCode(v.getUint8(at + i));
+        return /^\d{4}:\d\d:\d\d \d\d:\d\d:\d\d$/.test(str) && !str.startsWith('0000') ? str : null;
+      }
+      if ((m & 0xFF00) !== 0xFF00 || m === 0xFFDA) break;
+      o += 2 + len;
+    }
+  } catch { /* not a JPEG with EXIF */ }
+  return null;
+}
+const keyOf = async (f) => `${f.name}|${f.size}|${(await exifTaken(f)) || 'm' + (f.lastModified || 0)}`;
 const STATE = { wait: ['Waiting', ''], conv: ['Converting…', ''], up: ['Uploading', ''], ok: ['Uploaded', 'ok'], dup: ['Already in gallery', 'dup'], bad: ['Failed', 'bad'], net: ['No signal, waiting…', ''] };
 function mark(it, st, extra = '') {
   it.st = st;
@@ -131,7 +155,8 @@ $('#retry').onclick = () => run(items.filter((it) => it.st === 'bad'));
 $('#picker').onchange = async (e) => {
   const files = [...e.target.files]; e.target.value = '';
   if (!files.length) return;
-  const fresh = files.map((f) => ({ file: f, key: keyOf(f) })).filter((x) => !items.some((it) => it.key === x.key));
+  const all = await Promise.all(files.map(async (f) => ({ file: f, key: await keyOf(f) })));
+  const fresh = all.filter((x) => !items.some((it) => it.key === x.key));
   for (const x of fresh) {
     x.el = document.createElement('li');
     x.el.innerHTML = '<span class="nm"></span><span class="st"></span>';

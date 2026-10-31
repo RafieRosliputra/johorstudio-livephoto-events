@@ -85,3 +85,11 @@ Baca fail ini dahulu, kemudian `docs/v3-live-photo-pelan.md`. Semua kerja v3 ada
 
 ## Projek berkaitan
 Lihat §9b dalam pelan. tnas = `192.168.1.131` (Tailscale `tnas`), m10 = `192.168.0.100` (Tailscale `m10`, `100.101.43.120`).
+
+## 1 Nov 2026 (malam): permintaan Rafi
+- Skrin besar: footer kapsul kaca (pilihan A), lebih rapat ke bawah. QR dipapar **di skrin LED** bila admin/organiser tekan "Show QR on big screen" (masa = tetapan "QR on screen (s)", default 30).
+- Popup laman utama: 1 kotak kod ("123 456"). 1 event live: nama + tarikh + organiser terus. >1 event: senarai nama, tekan → tarikh + organiser + kotak kod. Event "hide name": "Event in progress" + tarikh + organiser.
+- Kod & CSS/JS kini dihantar dengan `no-cache` + ETag (deploy terus nampak; sebelum ni CSS lama di-cache sebab itu kotak kod nampak rosak).
+- Elak upload dua kali: kunci `nama|saiz|masa EXIF` (atau `m<lastModified>`), jadual `sent_keys`; `/api/shoot/check`; upload yang terputus disambung dari bait terakhir.
+- Upload manual photographer: web /shoot (senarai status, cuba semula tanpa had bila internet putus) dan app JS Tether 4.1 ("Upload gambar dari telefon", "Senarai upload").
+- iOS: Rafi pilih tiada app; photographer iPhone guna web /shoot.
