@@ -184,6 +184,21 @@ test('photographer: code + name -> Photographer N, upload is approved without AI
   assert.equal(up.status, 200); assert.equal(up.body.photo.status, 'approved'); assert.equal(up.body.photo.by, 'Aiman');
   assert.equal(modCalls, before);
   assert.ok(fs.existsSync(path.join(process.env.PHOTOS_DIR, 'EVENTS', ev.folder, 'Photographer 1', 'DSC01234.webp')));
+  // same original file again (name|size|time taken): not stored twice; resumed when cut off halfway
+  const key = 'DSC01235.JPG|8123456|1761955200000';
+  const first = await upload(photog, '/api/shoot/uploads', fakeWebp(6000, 4000, 5000), { name: 'DSC01235.webp', key });
+  assert.equal(first.status, 200);
+  const again = await photog('POST', '/api/shoot/uploads', { body: { name: 'DSC01235.webp', size: 5100, key } });
+  assert.equal(again.status, 200); assert.equal(again.body.duplicate, true); assert.equal(again.body.photo.id, first.body.photo.id);
+  const chk = await photog('POST', '/api/shoot/check', { body: { keys: [key, 'OTHER.JPG|1|2'] } });
+  assert.deepEqual(chk.body.sent, [key]);
+  const half = fakeWebp(6000, 4000, 9000), key2 = 'DSC01236.JPG|9000000|1761955300000';
+  const st = await photog('POST', '/api/shoot/uploads', { body: { name: 'DSC01236.webp', size: half.length, key: key2 } });
+  await photog('PUT', `/api/uploads/${st.body.id}?offset=0`, { raw: half.subarray(0, 4000) });
+  const re = await photog('POST', '/api/shoot/uploads', { body: { name: 'DSC01236.webp', size: half.length, key: key2 } });
+  assert.equal(re.body.id, st.body.id); assert.equal(re.body.received, 4000); assert.equal(re.body.resumed, true);
+  await photog('PUT', `/api/uploads/${st.body.id}?offset=4000`, { raw: half.subarray(4000) });
+  assert.equal((await photog('POST', `/api/uploads/${st.body.id}/complete`)).status, 200);
   // admin moves Aiman to slot 3; his session follows
   await A('POST', `/api/admin/events/${ev.id}/slots`, { body: { from: 1, to: 3 } });
   assert.equal((await photog('GET', '/api/shoot')).body.slot, 3);
@@ -210,7 +225,7 @@ test('organiser panel: review queue, allow / remove, request to close', async ()
   const blocked = await client('GET', `/api/client/events/${ev.id}/photos?filter=blocked`);
   assert.equal(blocked.body.photos.length, 1);
   await client('PATCH', `/api/client/events/${ev.id}/photos/${review.body.photos[0].id}`, { body: { status: 'approved' } });
-  assert.equal((await guest('GET', `/api/e/${ev.token}`)).body.photos.length, 3);
+  assert.equal((await guest('GET', `/api/e/${ev.token}`)).body.photos.length, 5);
   assert.equal((await client('DELETE', `/api/client/events/${ev.id}/photos/${blocked.body.photos[0].id}`)).status, 200);
   // organiser cannot use admin routes or change settings
   assert.equal((await client('POST', `/api/admin/events/${ev.id}/close`)).status, 401);
@@ -220,8 +235,14 @@ test('organiser panel: review queue, allow / remove, request to close', async ()
 });
 
 test('settings, extend, close: guests and photographers logged out, guest code changes, gallery stays', async () => {
-  const s = await A('PATCH', `/api/admin/events/${ev.id}`, { body: { settings: { newSec: 4, loopSec: 6, loopSource: 'public', idleMin: 2 } } });
-  assert.deepEqual(s.body.event.settings, { newSec: 4, loopSec: 6, loopSource: 'public', idleMin: 2 });
+  const s = await A('PATCH', `/api/admin/events/${ev.id}`, { body: { settings: { newSec: 4, loopSec: 6, loopSource: 'public', idleMin: 2, qrSec: 45 } } });
+  assert.deepEqual(s.body.event.settings, { newSec: 4, loopSec: 6, loopSource: 'public', idleMin: 2, qrSec: 45 });
+  // QR on the big screen: organiser or admin shows it for qrSec seconds, then hides it
+  const qr = await client('POST', `/api/client/events/${ev.id}/qr`, { body: { on: true } });
+  assert.equal(qr.status, 200); assert.ok(qr.body.until > Date.now() + 40e3 && qr.body.until <= Date.now() + 45e3);
+  assert.equal((await A('GET', `/api/admin/events/${ev.id}`)).body.event.qrUntil, qr.body.until);
+  assert.equal((await A('POST', `/api/admin/events/${ev.id}/qr`, { body: { on: false } })).body.until, 0);
+  assert.equal((await stranger('POST', `/api/client/events/${ev.id}/qr`, { body: { on: true } })).status, 401);
   const manual = await A('PATCH', `/api/admin/events/${ev.id}`, { body: { codes: { public: codes.client } } });
   assert.equal(manual.status, 409);
   const before = (await A('GET', `/api/admin/events/${ev.id}`)).body.event;
@@ -232,7 +253,7 @@ test('settings, extend, close: guests and photographers logged out, guest code c
   assert.notEqual(c.body.event.codes.public, codes.public);
   assert.equal((await photog('GET', '/api/shoot')).status, 401);
   const g = await guest('GET', `/api/e/${ev.token}`);
-  assert.equal(g.status, 200); assert.equal(g.body.guest.canUpload, false); assert.equal(g.body.photos.length, 3);
+  assert.equal(g.status, 200); assert.equal(g.body.guest.canUpload, false); assert.equal(g.body.photos.length, 5);
   assert.equal((await client('GET', `/api/client/events/${ev.id}`)).status, 200); // organiser keeps access 7 days
   assert.equal((await stranger('GET', '/api/live-status')).body.count, 0);
 });

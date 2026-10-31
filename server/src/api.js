@@ -42,6 +42,10 @@ const galleryUrl = (ev) => `${config.publicUrl}/e/${ev.public_token}`;
 const codeUrl = (code) => `${config.publicUrl}/c/${code}`;
 const parseReq = (ev) => { try { return ev.request ? JSON.parse(ev.request) : null; } catch { return null; } };
 
+// QR on the big screen, shown from the admin or organiser panel for settings.qrSec seconds (in memory only).
+const qrUntil = new Map(); // eventId -> ms
+const qrState = (id) => { const u = qrUntil.get(id) || 0; return u > Date.now() ? u : 0; };
+
 function staffEventJson(ev) {
   const c = db.eventCounts(ev.id);
   return {
@@ -49,7 +53,7 @@ function staffEventJson(ev) {
     token: ev.public_token, url: galleryUrl(ev), status: db.status(ev), startsAt: ev.starts_at, endsAt: ev.ends_at, closedAt: ev.closed_at,
     codes: { public: ev.public_code, photographer: ev.photo_code, client: ev.client_code },
     codeUrl: codeUrl(ev.public_code), publicUpload: !!ev.public_upload_on, showcase: !!ev.showcase,
-    settings: db.settingsOf(ev), request: parseReq(ev), createdAt: ev.created_at,
+    settings: db.settingsOf(ev), request: parseReq(ev), createdAt: ev.created_at, qrUntil: qrState(ev.id),
     photoCount: c.photo_count || 0, guestCount: c.guest_count || 0, reviewCount: c.review_count || 0, blockedCount: c.blocked_count || 0,
   };
 }
@@ -95,7 +99,7 @@ r('GET', '/api/live-status', (req, res) => {
   const origin = req.headers.origin;
   const headers = { 'cache-control': 'public, max-age=30' };
   if (origin && config.siteOrigins.includes(origin)) Object.assign(headers, { 'access-control-allow-origin': origin, vary: 'Origin' });
-  const live = db.nowLive().map((e) => ({ id: e.id, name: e.hide_name ? 'Event in progress' : e.title, endsAt: e.ends_at }));
+  const live = db.nowLive().map((e) => ({ id: e.id, name: e.hide_name ? 'Event in progress' : e.title, organiser: e.organiser || '', date: e.date, startsAt: e.starts_at, endsAt: e.ends_at }));
   sendJson(res, 200, { live, count: live.length }, headers);
 });
 
@@ -161,8 +165,20 @@ r('GET', '/api/shoot', (req, res) => {
 // ---------------- chunked uploads ----------------
 // 1) POST start -> {id, chunk}   2) PUT /api/uploads/:id?offset=N (repeat, resumable)
 // 3) PUT /api/uploads/:id/thumb/480|1600 (optional)   4) POST /api/uploads/:id/complete
-function startUpload(res, ev, { source, slot, sessionId, uploader, name, size, ip }) {
+const cleanKey = (k) => (typeof k === 'string' && k.length > 2 && k.length <= 300 ? k : '');
+function startUpload(res, ev, { source, slot, sessionId, uploader, name, size, ip, dupKey = '' }) {
   requireStorage();
+  if (dupKey) {
+    // Same original file (name|size|time taken) already in this event: say so instead of a second copy.
+    const sent = db.sentKey(ev.id, dupKey);
+    const photo = sent && db.getPhoto(sent.photo_id);
+    if (photo && photo.event_id === ev.id) return sendJson(res, 200, { duplicate: true, photo: photoJson(photo) });
+    // Started before (e.g. the phone lost signal): resume that upload.
+    const open = db.openUploadByKey(ev.id, dupKey);
+    if (open && open.session_id === sessionId && Number(size) === open.size) {
+      return sendJson(res, 200, { id: open.id, chunk: config.chunkBytes, received: open.received, size: open.size, name: path.posix.basename(open.rel_path), slot: open.slot, resumed: true });
+    }
+  }
   size = Number(size);
   const max = source === 'public' ? config.maxGuestBytes : config.maxUploadBytes;
   if (!Number.isInteger(size) || size <= 0) fail(400, 'File size is required');
@@ -171,14 +187,21 @@ function startUpload(res, ev, { source, slot, sessionId, uploader, name, size, i
     ? `guest-${new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)}-${shortToken(4)}.webp`
     : storage.cleanFileName(name);
   const relPath = storage.uniqueRelPath(ev, storage.sourceFolder(source, slot), fileName);
-  const up = db.createUpload({ id: randomToken(24), eventId: ev.id, sessionId, source, slot, uploader, relPath, size, clientIp: ip });
+  const up = db.createUpload({ id: randomToken(24), eventId: ev.id, sessionId, source, slot, uploader, relPath, size, clientIp: ip, dupKey });
   fs.writeFileSync(storage.partFile(ev, relPath), '');
   sendJson(res, 201, { id: up.id, chunk: config.chunkBytes, received: 0, size, name: path.posix.basename(relPath), slot });
 }
 r('POST', '/api/shoot/uploads', async (req, res) => {
   const { session, event } = auth.requireSession(req, 'photographer');
   const body = await readJson(req);
-  startUpload(res, event, { source: 'photographer', slot: session.slot, sessionId: session.id, uploader: session.name, name: body.name, size: body.size, ip: clientIp(req) });
+  startUpload(res, event, { source: 'photographer', slot: session.slot, sessionId: session.id, uploader: session.name, name: body.name, size: body.size, ip: clientIp(req), dupKey: cleanKey(body.key) });
+});
+// Which of these files (original name|size|time taken) are already in the event? For the app/web upload log.
+r('POST', '/api/shoot/check', async (req, res) => {
+  const { event } = auth.requireSession(req, 'photographer');
+  const body = await readJson(req);
+  const keys = (Array.isArray(body.keys) ? body.keys : []).slice(0, 1000).map(cleanKey).filter(Boolean);
+  sendJson(res, 200, { sent: keys.filter((k) => db.sentKey(event.id, k)) });
 });
 // JS Tether APK, only for signed-in photographers (and admins below).
 const apkJson = (m) => (m ? { name: m.name, version: m.version, size: m.size, tag: m.tag, published: m.published } : null);
@@ -269,6 +292,7 @@ r('POST', '/api/uploads/:id/complete', (req, res, { params }) => {
   const { photo } = db.upsertPhoto({ id: photoId, eventId: ev.id, relPath: up.rel_path, source: up.source, slot: up.slot, uploader: up.uploader,
     status: guest ? 'pending' : 'approved', width: info.width, height: info.height, bytes: st.size, mtime: Math.floor(st.mtimeMs), thumbs });
   db.deleteUpload(up.id);
+  if (up.dup_key) db.addSentKey(ev.id, up.dup_key, photo.id);
   if (guest && up.session_id) db.bumpUploads(up.session_id);
   publishPhoto(photo);
   if (guest) checkPhoto(photo);
@@ -330,6 +354,15 @@ for (const prefix of ['admin', 'client']) {
     const { ev } = await staffFor(req, prefix, params.id);
     storage.deletePhoto(ev, photoOfEvent(ev, params.photo));
     sendJson(res, 200, { ok: true });
+  });
+  // Show / hide the QR popup on the big screen (LED at the event).
+  r('POST', `${P}/events/:id/qr`, async (req, res, { params }) => {
+    const { ev } = await staffFor(req, prefix, params.id);
+    const body = await readJson(req);
+    const until = body.on ? Date.now() + db.settingsOf(ev).qrSec * 1000 : 0;
+    if (until) qrUntil.set(ev.id, until); else qrUntil.delete(ev.id);
+    publish(ev.id, 'qr', { until, code: ev.public_code, url: codeUrl(ev.public_code) });
+    sendJson(res, 200, { until });
   });
   r('GET', `${P}/events/:id/photos/:photo/img/:size`, async (req, res, { params, query }) => {
     const { ev } = await staffFor(req, prefix, params.id);
@@ -398,6 +431,7 @@ A('PATCH', '/events/:id', async (req, res, { params }) => {
     if (body.settings.newSec != null) s.newSec = num(body.settings.newSec, 1, 30);
     if (body.settings.loopSec != null) s.loopSec = num(body.settings.loopSec, 1, 60);
     if (body.settings.idleMin != null) s.idleMin = num(body.settings.idleMin, 1, 60);
+    if (body.settings.qrSec != null) s.qrSec = num(body.settings.qrSec, 5, 600);
     if (['all', 'public', 'photographer'].includes(body.settings.loopSource)) s.loopSource = body.settings.loopSource;
     f.settings = JSON.stringify(s);
   }

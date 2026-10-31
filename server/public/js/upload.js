@@ -9,8 +9,12 @@ async function req(method, url, body, headers = {}) {
   return { status: r.status, ok: r.ok, data };
 }
 
+// Wait until the browser says it is online again (or 30 s, in case the event never fires).
+const online = () => (navigator.onLine === false ? new Promise((r) => { const t = setTimeout(r, 30000); addEventListener('online', () => { clearTimeout(t); r(); }, { once: true }); }) : null);
+
 // Retry network errors / 5xx with backoff. 4xx errors (except 409/429) are final.
-async function withRetry(fn, tries = 8) {
+// tries = Infinity keeps going until the signal comes back (photographers).
+async function withRetry(fn, tries = 8, onWait) {
   let wait = 1000;
   for (let i = 0; ; i++) {
     let res;
@@ -21,23 +25,27 @@ async function withRetry(fn, tries = 8) {
       const e = new Error(res.data.error || `Upload failed (${res.status || 'network'})`);
       e.status = res.status; throw e;
     }
-    await sleep(wait); wait = Math.min(wait * 2, 15000);
+    onWait?.(res.status === 0 ? 'No connection, retrying…' : 'Server busy, retrying…');
+    await (online() || sleep(wait)); wait = Math.min(wait * 2, 15000);
   }
 }
 
-export async function uploadPhoto({ startUrl, startBody, blob, thumbs = {}, onProgress = () => {} }) {
-  const start = await withRetry(() => req('POST', startUrl, JSON.stringify({ ...startBody, size: blob.size }), { 'content-type': 'application/json' }));
+/** Returns the photo; photo.duplicate = true when the server already had this file (startBody.key). */
+export async function uploadPhoto({ startUrl, startBody, blob, thumbs = {}, onProgress = () => {}, tries = 8, onWait }) {
+  const R = (fn) => withRetry(fn, tries, onWait);
+  const start = await R(() => req('POST', startUrl, JSON.stringify({ ...startBody, size: blob.size }), { 'content-type': 'application/json' }));
+  if (start.data.duplicate) return { ...start.data.photo, duplicate: true };
   const { id, chunk } = start.data;
-  let offset = 0;
+  let offset = start.data.received || 0;
   while (offset < blob.size) {
     const part = blob.slice(offset, Math.min(blob.size, offset + chunk));
-    const r = await withRetry(() => req('PUT', `/api/uploads/${id}?offset=${offset}`, part));
+    const r = await R(() => req('PUT', `/api/uploads/${id}?offset=${offset}`, part));
     offset = r.data.received;
     onProgress(offset / blob.size);
   }
   for (const [size, t] of Object.entries(thumbs)) {
-    if (t) await withRetry(() => req('PUT', `/api/uploads/${id}/thumb/${size}`, t));
+    if (t) await R(() => req('PUT', `/api/uploads/${id}/thumb/${size}`, t));
   }
-  const done = await withRetry(() => req('POST', `/api/uploads/${id}/complete`));
+  const done = await R(() => req('POST', `/api/uploads/${id}/complete`));
   return done.data.photo;
 }

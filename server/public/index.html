@@ -54,6 +54,16 @@
   .cm-alt { font-size: 13px; }
   .code-box .field { text-align: left; }
   .code-box details { text-align: left; }
+  .cm-meta { margin: -6px 0 0; color: var(--steel); font-size: 14px; display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 10px; }
+  .cm-meta b { color: var(--ink); font-weight: 600; }
+  .cm-list { display: flex; flex-direction: column; gap: 8px; }
+  .cm-ev { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: #fff; border: 1.5px solid var(--line); border-radius: 10px;
+    padding: 13px 14px; font: 600 16px var(--font); color: var(--ink); cursor: pointer; }
+  .cm-ev:hover, .cm-ev:focus-visible { border-color: var(--teal); outline: none; background: var(--teal-soft); }
+  .cm-ev::before { content: ""; flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--tally); }
+  .cm-ev span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cm-ev::after { content: "›"; color: var(--steel); font-size: 22px; line-height: 1; }
+  .cm-other { align-self: center; font-size: 14px; }
   .cm-back { background: var(--teal-soft); border-radius: 8px; padding: 10px; font-size: 14px; }
   .contact { display: flex; flex-wrap: wrap; gap: 24px; justify-content: space-between; align-items: center; padding: 28px; }
 </style>
@@ -156,8 +166,11 @@
     <button class="cm-close" type="button" id="cmClose" aria-label="Close">×</button>
     <div class="cm-kicker" id="cmKicker">LIVE PHOTO</div>
     <h2 id="cmTitle">Looking for your event?</h2>
+    <p class="cm-meta hidden" id="cmMeta"></p>
     <p class="cm-sub" id="cmSub">Enter the 6-digit code shown on the screen at your event.</p>
     <div id="cmBack" class="hidden"></div>
+    <div class="cm-list hidden" id="cmList"></div>
+    <div id="cmEntry" style="display:flex;flex-direction:column;gap:14px">
     <div id="cmBoxes"></div>
     <div class="field hidden" id="cmNameField">
       <label for="cmName">Your name</label>
@@ -165,6 +178,8 @@
     </div>
     <p class="error" id="cmErr" role="alert"></p>
     <button class="btn cm-go" type="button" id="cmGo">Send photos</button>
+    </div>
+    <button class="linkbtn cm-other hidden" type="button" id="cmOther">‹ Other events live now</button>
     <details class="help">
       <summary>Where do I get this code?</summary>
       <p id="cmHelp">It is on the big screen, on banners and table cards at the event. You can also ask the organiser or committee.</p>
@@ -198,14 +213,22 @@ const MODES = {
   client: { kicker: 'ORGANISER', title: 'Organiser panel', sub: 'Enter the organiser code from JohorStudio.com to review guest photos.', go: 'Open panel',
     help: 'The organiser code was sent to you by JohorStudio.com with your booking.' },
 };
-let mode = 'guest', busy = false;
+let mode = 'guest', busy = false, live = [];
 const boxes = codeBoxes($('#cmBoxes'), { onChange: () => { $('#cmErr').textContent = ''; }, onComplete: () => { if (mode !== 'photographer' || $('#cmName').value.trim()) submit(); } });
-function setMode(m, eventName) {
+const evDate = (e) => fmtDate(e.date) || (e.startsAt ? new Date(e.startsAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
+// view: 'code' (code box) or 'list' (choose one of several live events)
+function setMode(m, ev, view = 'code') {
   mode = m;
   const t = MODES[m];
+  const guestEv = m === 'guest' && ev;
   $('#cmKicker').textContent = t.kicker;
-  $('#cmTitle').textContent = eventName && m === 'guest' ? eventName : t.title;
-  $('#cmSub').textContent = t.sub;
+  $('#cmTitle').textContent = view === 'list' ? 'Which event are you at?' : guestEv ? ev.name : t.title;
+  $('#cmMeta').classList.toggle('hidden', !guestEv || view === 'list');
+  if (guestEv) $('#cmMeta').innerHTML = [evDate(ev) && `<span>${esc(evDate(ev))}</span>`, ev.organiser && `<span>by <b>${esc(ev.organiser)}</b></span>`].filter(Boolean).join('');
+  $('#cmSub').textContent = view === 'list' ? 'Tap your event, then enter the code shown on the screen.' : t.sub;
+  $('#cmList').classList.toggle('hidden', view !== 'list');
+  $('#cmEntry').classList.toggle('hidden', view === 'list');
+  $('#cmOther').classList.toggle('hidden', !(m === 'guest' && view === 'code' && live.length > 1));
   $('#cmGo').textContent = t.go;
   $('#cmHelp').textContent = t.help;
   $('#cmNameField').classList.toggle('hidden', m !== 'photographer');
@@ -213,17 +236,25 @@ function setMode(m, eventName) {
   $('#cmGuest').classList.toggle('hidden', m === 'guest');
   $('#cmErr').textContent = '';
 }
-function openModal(m = 'guest', { eventName, code } = {}) {
-  setMode(m, eventName);
+function renderList() {
+  $('#cmList').innerHTML = live.map((e, i) => `<button class="cm-ev" type="button" data-i="${i}"><span>${esc(e.name)}</span></button>`).join('');
+  $$('.cm-ev').forEach((b) => b.onclick = () => { setMode('guest', live[b.dataset.i]); boxes.focus(); });
+}
+function openModal(m = 'guest', { ev, code } = {}) {
+  const list = m === 'guest' && !ev && !code && live.length > 1;
+  if (m === 'guest' && !ev && live.length === 1) ev = live[0];
+  setMode(m, ev, list ? 'list' : 'code');
   $('#codeModal').classList.remove('hidden');
+  if (list) { $('.cm-ev')?.focus(); return; }
   if (code) { boxes.set(code); if (m === 'guest') submit(); } else boxes.focus();
 }
+$('#cmOther').onclick = () => setMode('guest', null, 'list');
 const closeModal = () => { $('#codeModal').classList.add('hidden'); try { sessionStorage.setItem('lp-skip', '1'); } catch {} };
 $('#cmClose').onclick = closeModal;
 $('#codeModal').addEventListener('click', (e) => { if (e.target.id === 'codeModal') closeModal(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#codeModal').classList.contains('hidden')) closeModal(); });
 $('#cmPhotog').onclick = () => { setMode('photographer'); boxes.clear(); };
-$('#cmGuest').onclick = () => { setMode('guest'); boxes.clear(); };
+$('#cmGuest').onclick = () => { boxes.clear(); openModal('guest'); };
 $('#codeLink').onclick = () => openModal('guest');
 $('#organiserLink').onclick = () => openModal('client');
 $('#cmGo').onclick = () => submit();
@@ -232,7 +263,7 @@ $('#cmName').addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(
 async function submit() {
   if (busy) return;
   const code = boxes.get();
-  if (code.length !== 6) { $('#cmErr').textContent = 'Enter all 6 digits.'; boxes.focus(); return; }
+  if (code.length !== 6) { $('#cmErr').textContent = 'Enter the 6-digit code.'; boxes.focus(); return; }
   const name = $('#cmName').value.trim();
   if (mode === 'photographer' && !name) { $('#cmErr').textContent = 'Type your name.'; $('#cmName').focus(); return; }
   busy = true; $('#cmGo').disabled = true;
@@ -252,12 +283,13 @@ Promise.all([
   fetch('/api/live-status').then((r) => r.json()).catch(() => ({ live: [] })),
   fetch('/api/me').then((r) => r.json()).catch(() => ({})),
 ]).then(([status, me]) => {
-  const live = status.live || [];
+  live = status.live || [];
+  renderList();
   if (live.length) {
     $('#liveStrip').classList.remove('hidden');
-    $('#liveBtns').innerHTML = live.map((e) => `<button class="live-btn" type="button" data-name="${esc(e.name)}">
+    $('#liveBtns').innerHTML = live.map((e, i) => `<button class="live-btn" type="button" data-i="${i}">
       <span class="lb-top">LIVE PHOTO ACTIVE</span><span class="lb-name">${esc(e.name)}</span></button>`).join('');
-    $$('.live-btn').forEach((b) => b.onclick = () => openModal('guest', { eventName: b.dataset.name === 'Event in progress' ? '' : b.dataset.name }));
+    $$('.live-btn').forEach((b) => b.onclick = () => openModal('guest', { ev: live[b.dataset.i] }));
   }
   if (me.guest) {
     $('#cmBack').classList.remove('hidden');
@@ -266,7 +298,7 @@ Promise.all([
   let skipped = false;
   try { skipped = sessionStorage.getItem('lp-skip') === '1'; } catch {}
   if (qrCode) { history.replaceState(null, '', '/'); openModal('guest', { code: qrCode }); }
-  else if (live.length && !skipped) openModal('guest', { eventName: live.length === 1 && live[0].name !== 'Event in progress' ? live[0].name : '' });
+  else if (live.length && !skipped) openModal('guest');
 });
 
 // Sample section only appears when the admin has featured an event.

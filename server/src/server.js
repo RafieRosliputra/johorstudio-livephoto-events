@@ -37,11 +37,15 @@ function serveStatic(req, res, pathname) {
   let st; try { st = fs.statSync(file); } catch { return false; }
   if (!st.isFile()) return false;
   const ext = path.extname(file);
+  // Pages, CSS and JS: revalidate every time (cheap 304 via ETag) so a deploy shows at once.
+  const etag = `"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`;
+  if (req.headers['if-none-match'] === etag) { res.writeHead(304, { etag }); res.end(); return true; }
   res.writeHead(200, {
+    etag,
     'content-type': TYPES[ext] || 'application/octet-stream',
     'content-length': st.size,
-    // HTML always fresh; versioned assets (vendor/wasm) can be cached long.
-    'cache-control': ext === '.html' ? 'no-cache' : rel.startsWith('vendor/') ? 'public, max-age=604800' : 'public, max-age=300',
+    // versioned assets (vendor/wasm) can be cached long; everything else is checked on each load.
+    'cache-control': rel.startsWith('vendor/') ? 'public, max-age=604800' : 'no-cache',
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'strict-origin-when-cross-origin',
   });

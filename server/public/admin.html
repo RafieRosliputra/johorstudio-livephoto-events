@@ -41,6 +41,7 @@
   .inline { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
   .inline .input { padding: 8px 10px; }
   .grid4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .grid4 .inline { justify-content: space-between; } /* inputs line up even when a label wraps */
   .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
   .tab { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 5px 12px; font-size: 14px; cursor: pointer; color: var(--ink); }
   .tab[aria-pressed="true"] { background: var(--graphite); color: #fff; border-color: var(--graphite); }
@@ -51,9 +52,6 @@
   .flags { display: flex; gap: 4px; flex-wrap: wrap; }
   .usermenu { display: flex; align-items: center; gap: 12px; font-size: 14px; color: var(--mist); }
   .reqbox { background: #fff2dc; color: #5c3a00; border-radius: 10px; padding: 12px 14px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
-  .qrwrap { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
-  .qrwrap img { width: min(360px, 80vw); image-rendering: pixelated; }
-  .qrwrap .big { font-size: 56px; font-weight: 800; font-stretch: 80%; letter-spacing: .08em; font-variant-numeric: tabular-nums; }
   .modal-box.wide { max-width: 560px; }
   .apkcard { border: 1px solid var(--mist); background: #fff; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
   .empty-state { padding: 30px 16px; text-align: center; color: var(--steel); }
@@ -83,7 +81,7 @@
 </div>
 
 <script type="module">
-import { $, $$, api, esc, toast, modal, fmtDate, todayYmd, copyText, qrDataUrl, icon } from '/js/common.js';
+import { $, $$, api, esc, toast, modal, fmtDate, todayYmd, copyText, icon } from '/js/common.js';
 import { PhotoGrid, openLightbox, liveFeed } from '/js/grid.js';
 import { codeBoxes, sendCode } from '/js/codebox.js';
 
@@ -187,7 +185,7 @@ function render() {
         ${admin ? codeCard('Organiser', 'client', e.codes.client, admin, 'Give to the client. Works until 7 days after the event.') : ''}
       </div>
       <div class="row">
-        <button class="btn" id="qrBtn">${icon.qr}Big screen code + QR</button>
+        <button class="btn" id="qrBtn">${icon.qr}Show QR on big screen</button>
         <a class="btn ghost" href="/show/${e.id}" target="_blank" rel="noopener">Open big screen</a>
         <button class="btn ghost" id="copyLink">Copy gallery link</button>
       </div>
@@ -205,7 +203,8 @@ function render() {
       <div class="grid4">
         <label class="inline">New photo shown (s)<input class="input" type="number" min="1" max="30" id="sNew" value="${e.settings.newSec}"></label>
         <label class="inline">Loop photo shown (s)<input class="input" type="number" min="1" max="60" id="sLoop" value="${e.settings.loopSec}"></label>
-        <label class="inline">"Upload your photos!" after (min)<input class="input" type="number" min="1" max="60" id="sIdle" value="${e.settings.idleMin}"></label>
+        <label class="inline">Upload bubble after (min)<input class="input" type="number" min="1" max="60" id="sIdle" value="${e.settings.idleMin}"></label>
+        <label class="inline">QR on screen (s)<input class="input" type="number" min="5" max="600" id="sQr" value="${e.settings.qrSec}"></label>
         <label class="inline">Photos in the loop<select class="input" id="sSrc">
           ${['all', 'public', 'photographer'].map((v) => `<option value="${v}" ${e.settings.loopSource === v ? 'selected' : ''}>${{ all: 'All photos', public: 'Guests only', photographer: 'Photographers only' }[v]}</option>`).join('')}</select></label>
       </div>
@@ -264,7 +263,11 @@ function codeCard(label, key, value, admin, help) {
 function wire(e, admin) {
   $('#backBtn').onclick = () => { $('#view').classList.remove('detail-open'); };
   $('#copyLink').onclick = () => copyText(e.url);
-  $('#qrBtn').onclick = () => bigQr(e);
+  qrUntil = e.qrUntil || 0; qrTick();
+  $('#qrBtn').onclick = async () => {
+    try { const r = await api('POST', `${BASE}/events/${e.id}/qr`, { on: !(qrUntil > Date.now()) }); qrUntil = r.until; qrTick(); }
+    catch (err) { toast(err.message, 5000); }
+  };
   const post = async (url, body) => { try { const r = await api('POST', url, body); if (r.warning) toast(r.warning, 6000); await refresh(); } catch (err) { toast(err.message, 5000); } };
   const startMs = () => new Date($('#startAt').value).getTime() || Date.now();
   $('#goLive') && ($('#goLive').onclick = () => post(`/api/admin/events/${e.id}/activate`, { startsAt: startMs(), hours: Number($('#hours').value) || 8 }));
@@ -286,7 +289,7 @@ function wire(e, admin) {
   });
   if (admin) {
     $('#saveSet').onclick = () => patch({ organiser: $('#sOrg').value, hideName: $('#sHide').checked, publicUpload: $('#sUp').checked, showcase: $('#sShow').checked,
-      settings: { newSec: $('#sNew').value, loopSec: $('#sLoop').value, idleMin: $('#sIdle').value, loopSource: $('#sSrc').value } }, 'Settings saved');
+      settings: { newSec: $('#sNew').value, loopSec: $('#sLoop').value, idleMin: $('#sIdle').value, qrSec: $('#sQr').value, loopSource: $('#sSrc').value } }, 'Settings saved');
     $$('[data-slot]').forEach((s) => s.onchange = async () => { try { await api('POST', `/api/admin/events/${e.id}/slots`, { from: Number(s.dataset.slot), to: Number(s.value) }); refresh(); } catch (err) { toast(err.message, 5000); } });
     $$('[data-kick]').forEach((b) => b.onclick = async () => { await api('DELETE', `/api/admin/events/${e.id}/devices/${b.dataset.kick}`); refresh(); });
     $('#newLinkBtn').onclick = () => confirmBox('Change the gallery link?', 'The old link stops working.', 'Change link', () => patch({ newLink: true }, 'New link ready'));
@@ -301,15 +304,15 @@ function confirmBox(title, text, okLabel, fn) {
   $('#cOk', m.el).onclick = () => { m.close(); fn(); };
 }
 
-async function bigQr(e) {
-  const url = `${location.origin}/c/${e.codes.public}`;
-  const src = await qrDataUrl(url, 10);
-  modal(`<div class="qrwrap"><h2 style="margin:0">${esc(e.title)}</h2>
-    <div class="muted">Scan to send your photos, or go to <b>${esc(location.host)}</b> and enter</div>
-    <div class="big">${esc(fmtCode(e.codes.public))}</div>
-    <img src="${src}" alt="QR code that opens the event with the code filled in">
-    <div class="small muted">${esc(url)}</div>
-    <button class="btn ghost" data-close>Close</button></div>`).el.classList.add('wide');
+// QR popup on the big screen: the button shows the seconds left.
+let qrUntil = 0, qrTimer;
+function qrTick() {
+  clearTimeout(qrTimer);
+  const b = $('#qrBtn'); if (!b) return;
+  const left = Math.ceil((qrUntil - Date.now()) / 1000);
+  b.innerHTML = left > 0 ? `${icon.qr}Hide QR (${left} s)` : `${icon.qr}Show QR on big screen`;
+  b.classList.toggle('danger', left > 0);
+  if (left > 0) qrTimer = setTimeout(qrTick, 1000);
 }
 
 function confirmDelete(e) {
@@ -368,7 +371,7 @@ async function loadPhotos() {
   }
   feed?.stop();
   feed = liveFeed({ streamUrl: `${BASE}/events/${e.id}/stream`, pollUrl: `${BASE}/events/${e.id}/photos`, getCursor: () => Math.max(0, ...photos.map((p) => p.seq)),
-    onPhoto: () => scheduleRefresh(), onRemove: () => scheduleRefresh() });
+    onPhoto: () => scheduleRefresh(), onRemove: () => scheduleRefresh(), onQr: (d) => { qrUntil = d.until; qrTick(); } });
   if (!PANEL) makeMissingThumbs(e);
 }
 let refreshTimer;

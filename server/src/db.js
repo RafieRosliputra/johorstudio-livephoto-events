@@ -94,9 +94,18 @@ CREATE TABLE IF NOT EXISTS uploads (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
+
+-- Photographer files already sent, by original name|size|time taken: stops the same photo twice.
+CREATE TABLE IF NOT EXISTS sent_keys (
+  event_id   TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  key        TEXT NOT NULL,
+  photo_id   TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (event_id, key)
+);
 `;
 
-export const DEFAULT_SETTINGS = { newSec: 3, loopSec: 5, loopSource: 'all', idleMin: 3 };
+export const DEFAULT_SETTINGS = { newSec: 3, loopSec: 5, loopSource: 'all', idleMin: 3, qrSec: 30 };
 
 let db;
 const now = () => Date.now();
@@ -119,6 +128,7 @@ export function openDb(file = path.join(config.dataDir, 'livephoto.db')) {
   db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
   db.exec(SCHEMA);
+  try { db.exec("ALTER TABLE uploads ADD COLUMN dup_key TEXT NOT NULL DEFAULT ''"); } catch { /* already there */ }
   db.prepare("INSERT OR IGNORE INTO meta(key,value) VALUES('schema',?)").run(String(SCHEMA_VERSION));
   return db;
 }
@@ -323,8 +333,8 @@ export const randomPhotos = (eventId, n) =>
 // ---------- chunked uploads ----------
 export function createUpload(u) {
   const t = now();
-  q(`INSERT INTO uploads(id,event_id,session_id,source,slot,uploader,rel_path,size,received,thumbs,client_ip,created_at,updated_at)
-     VALUES(?,?,?,?,?,?,?,?,0,0,?,?,?)`).run(u.id, u.eventId, u.sessionId ?? null, u.source, u.slot ?? null, u.uploader || '', u.relPath, u.size, u.clientIp || '', t, t);
+  q(`INSERT INTO uploads(id,event_id,session_id,source,slot,uploader,rel_path,size,received,thumbs,client_ip,created_at,updated_at,dup_key)
+     VALUES(?,?,?,?,?,?,?,?,0,0,?,?,?,?)`).run(u.id, u.eventId, u.sessionId ?? null, u.source, u.slot ?? null, u.uploader || '', u.relPath, u.size, u.clientIp || '', t, t, u.dupKey || '');
   return getUpload(u.id);
 }
 export const getUpload = (id) => q('SELECT * FROM uploads WHERE id=?').get(id);
@@ -333,3 +343,8 @@ export const addUploadThumb = (id, bit) => q('UPDATE uploads SET thumbs=thumbs|?
 export const deleteUpload = (id) => q('DELETE FROM uploads WHERE id=?').run(id);
 export const staleUploads = (olderThanMs) => q('SELECT * FROM uploads WHERE updated_at<?').all(now() - olderThanMs);
 export const openUploadsFor = (sessionId) => q('SELECT COUNT(*) AS n FROM uploads WHERE session_id=?').get(sessionId).n;
+
+// ---------------- sent keys (duplicate check) ----------------
+export const sentKey = (eventId, key) => q('SELECT * FROM sent_keys WHERE event_id=? AND key=?').get(eventId, key);
+export const addSentKey = (eventId, key, photoId) => q('INSERT OR REPLACE INTO sent_keys(event_id,key,photo_id,created_at) VALUES(?,?,?,?)').run(eventId, key, photoId, now());
+export const openUploadByKey = (eventId, key) => q("SELECT * FROM uploads WHERE event_id=? AND dup_key=? AND dup_key<>'' ORDER BY created_at DESC LIMIT 1").get(eventId, key);

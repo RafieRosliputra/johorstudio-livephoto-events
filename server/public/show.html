@@ -11,12 +11,14 @@
 <style>
   /* Big screen (LED / projector): always dark, designed 16:9, works in portrait. */
   :root { --bg: #0d1113; --ink: #f5f7f7; --muted: #9fb0b2; --teal: #6cc4b9; --tally: #e0564e; --bar: rgba(13,17,19,.82); color-scheme: dark;
-    --font: Archivo, system-ui, sans-serif; }
+    --font: Archivo, system-ui, sans-serif;
+    --u: 1vw; /* footer unit: 1vw on 16:9, bigger on portrait */ }
+  .portrait { --u: 2.2vw; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: var(--font); overflow: hidden; }
   .stage { position: fixed; inset: 0; }
   .bgblur { position: absolute; inset: -40px; background-size: cover; background-position: center; filter: blur(40px) brightness(.45) saturate(1.1); transition: background-image .8s; }
-  .loop { position: absolute; inset: 0 0 12vh 0; display: flex; align-items: center; justify-content: center; padding: 3vh 3vw; }
+  .loop { position: absolute; inset: 0 0 calc(var(--u) * 6) 0; display: flex; align-items: center; justify-content: center; padding: 3vh 3vw; }
   .loop img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; box-shadow: 0 20px 60px rgba(0,0,0,.5); opacity: 0; transition: opacity .9s; }
   .loop img.on { opacity: 1; }
   /* New photo: slides in from the side, about half the screen, over the loop. */
@@ -28,17 +30,51 @@
   .newcard .cap { display: flex; justify-content: space-between; align-items: center; color: #1d2528; font-size: clamp(14px, 1.5vw, 28px); font-weight: 600; }
   .newcard .tag { background: var(--tally); color: #fff; font-weight: 800; letter-spacing: .1em; padding: .2em .6em; border-radius: 4px; font-size: .8em; }
   .portrait .newcard { max-width: 84vw; } .portrait .newcard img { max-width: 80vw; max-height: 56vh; }
-  footer { position: absolute; left: 0; right: 0; bottom: 0; height: 12vh; background: var(--bar); display: flex; align-items: center; justify-content: center; gap: 2.4vw;
-    font-size: clamp(16px, 2.6vw, 54px); font-weight: 600; letter-spacing: .01em; padding: 0 3vw; z-index: 6; white-space: nowrap; }
-  footer .url { color: var(--teal); font-weight: 800; }
-  footer .code { font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: .08em; color: #fff; background: var(--tally); padding: .1em .45em; border-radius: .25em; }
-  footer .dot { color: var(--muted); }
-  .portrait footer { flex-wrap: wrap; white-space: normal; gap: 0 3vw; font-size: clamp(16px, 4vw, 54px); text-align: center; }
-  .bubble { position: absolute; left: 50%; bottom: 15vh; transform: translateX(-50%); background: var(--tally); color: #fff; font-weight: 800; font-size: clamp(22px, 4.2vw, 90px);
+  /* Footer: floating glass pill. Camera "clicks" with a flash, URL shimmers, code digits hop one by one. */
+  footer { position: absolute; left: 50%; bottom: calc(var(--u) * 1.1); transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: calc(var(--u) * 1.1);
+    padding: calc(var(--u) * .55) calc(var(--u) * 1.4) calc(var(--u) * .55) calc(var(--u) * .6); border-radius: 999px; background: rgba(15,20,22,.62);
+    -webkit-backdrop-filter: blur(calc(var(--u) * 1.2)); backdrop-filter: blur(calc(var(--u) * 1.2)); border: 1px solid rgba(255,255,255,.18);
+    font-size: max(13px, calc(var(--u) * 1.35)); font-weight: 700; white-space: nowrap; box-shadow: 0 calc(var(--u) * 1) calc(var(--u) * 3) rgba(0,0,0,.4); }
+  footer .cam { width: calc(var(--u) * 2.6); height: calc(var(--u) * 2.6); min-width: 24px; min-height: 24px; border-radius: 50%; background: var(--tally); display: grid; place-items: center; position: relative; flex: none; }
+  footer .cam svg { width: 55%; height: 55%; }
+  footer .cam::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: #fff; opacity: 0; }
+  footer .dot { width: calc(var(--u) * .35); height: calc(var(--u) * .35); min-width: 4px; min-height: 4px; border-radius: 50%; background: rgba(255,255,255,.35); }
+  footer .url { background: linear-gradient(100deg, var(--teal) 0 40%, #fff 50%, var(--teal) 60% 100%); background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; }
+  footer .codewrap { display: flex; align-items: center; gap: calc(var(--u) * .35); }
+  footer .digits { display: flex; gap: calc(var(--u) * .22); }
+  footer .digits b { display: grid; place-items: center; width: 1.37em; height: 1.7em; border-radius: .3em; background: #fff; color: #1d2528; font-size: 1.07em; font-weight: 900; font-variant-numeric: tabular-nums; }
+  footer .digits b:nth-child(4) { margin-left: .37em; }
+  @media (prefers-reduced-motion: no-preference) {
+    footer .cam { animation: camPop 4s ease-in-out infinite; }
+    footer .cam::after { animation: flash 4s ease-out infinite; }
+    footer .url { animation: shimmer 3.2s linear infinite; }
+    footer .digits b { animation: hop 4s ease-in-out infinite; }
+    footer .digits b:nth-child(2) { animation-delay: .08s; } footer .digits b:nth-child(3) { animation-delay: .16s; }
+    footer .digits b:nth-child(4) { animation-delay: .24s; } footer .digits b:nth-child(5) { animation-delay: .32s; } footer .digits b:nth-child(6) { animation-delay: .4s; }
+  }
+  @keyframes camPop { 0%, 80%, 100% { transform: scale(1); } 86% { transform: scale(1.18) rotate(-8deg); } 92% { transform: scale(.95); } }
+  @keyframes flash { 0%, 84% { opacity: 0; } 86% { opacity: .9; } 96%, 100% { opacity: 0; } }
+  @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+  @keyframes hop { 0%, 70%, 100% { transform: translateY(0); } 78% { transform: translateY(-.4em); } 86% { transform: translateY(.07em); } }
+  /* QR popup, started from the admin / organiser panel */
+  .qrpop { position: absolute; inset: 0; z-index: 8; display: flex; align-items: center; justify-content: center; background: rgba(8,11,12,.55); opacity: 0; pointer-events: none; transition: opacity .5s; }
+  .qrpop.on { opacity: 1; }
+  .qrcard { background: #fff; color: #1d2528; border-radius: calc(var(--u) * 1.6); padding: calc(var(--u) * 2) calc(var(--u) * 2.6); display: flex; align-items: center; gap: calc(var(--u) * 2.4);
+    box-shadow: 0 3vw 8vw rgba(0,0,0,.6); transform: scale(.85); transition: transform .5s cubic-bezier(.2,.9,.3,1.3); }
+  .qrpop.on .qrcard { transform: scale(1); }
+  .qrcard img { width: min(30vw, 52vh); height: auto; image-rendering: pixelated; }
+  .qrtext { display: flex; flex-direction: column; gap: calc(var(--u) * .8); max-width: 34vw; }
+  .qrtext .k { color: var(--tally); font-weight: 800; letter-spacing: .14em; font-size: calc(var(--u) * 1.3); }
+  .qrtext h2 { margin: 0; font-size: calc(var(--u) * 3.6); line-height: 1.05; font-stretch: 85%; }
+  .qrtext p { margin: 0; font-size: calc(var(--u) * 1.6); color: #4a585d; }
+  .qrtext .c { font-size: calc(var(--u) * 4.4); font-weight: 900; letter-spacing: .08em; font-variant-numeric: tabular-nums; color: #1d2528; }
+  .qrtext .u { color: #1f6f68; font-weight: 800; }
+  .portrait .qrcard { flex-direction: column; text-align: center; } .portrait .qrtext { max-width: 80vw; } .portrait .qrcard img { width: 60vw; }
+  .bubble { position: absolute; left: 50%; bottom: calc(var(--u) * 7); transform: translateX(-50%); background: var(--tally); color: #fff; font-weight: 800; font-size: clamp(22px, 4.2vw, 90px);
     padding: .35em .9em; border-radius: 999px; box-shadow: 0 10px 50px rgba(224,86,78,.55); z-index: 7; white-space: nowrap; }
   @media (prefers-reduced-motion: no-preference) { .bubble { animation: bob 1.4s ease-in-out infinite; } }
   @keyframes bob { 0%, 100% { transform: translateX(-50%) scale(.9); } 50% { transform: translateX(-50%) scale(1.08); } }
-  .empty { position: absolute; inset: 0 0 12vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2vh; text-align: center; padding: 4vw; }
+  .empty { position: absolute; inset: 0 0 calc(var(--u) * 6); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2vh; text-align: center; padding: 4vw; }
   .empty h1 { margin: 0; font-size: clamp(28px, 5vw, 110px); font-stretch: 80%; }
   .empty p { margin: 0; color: var(--muted); font-size: clamp(16px, 2vw, 44px); }
   .controls { position: absolute; top: 12px; right: 12px; z-index: 9; display: flex; gap: 8px; transition: opacity .4s; }
@@ -55,7 +91,11 @@
   <div class="loop"><img id="loopImg" alt=""></div>
   <div class="empty hidden" id="empty"><h1 id="emptyTitle">Photos will appear here</h1><p>Take a photo and send it to the live gallery.</p></div>
   <div class="bubble hidden" id="bubble">Upload your photos!</div>
-  <footer id="foot"><span>Upload photo here</span><span class="dot">·</span><span class="url" id="url">live.johorstudio.com</span><span class="dot">·</span><span>Code <span class="code" id="code">— —</span></span></footer>
+  <footer id="foot"><span class="cam"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></span>
+    <span>Upload your photo</span><span class="dot"></span><span class="url" id="url">live.johorstudio.com</span><span class="dot"></span>
+    <span class="codewrap">Code <span class="digits" id="code"></span></span></footer>
+  <div class="qrpop" id="qrpop" aria-hidden="true"><div class="qrcard"><img id="qrImg" alt="">
+    <div class="qrtext"><span class="k">LIVE PHOTO</span><h2>Scan to send your photos</h2><p>or open <span class="u" id="qrHost">live.johorstudio.com</span> and enter</p><span class="c" id="qrCode"></span></div></div></div>
 </div>
 <div class="controls" id="controls"><button id="fsBtn" type="button">Full screen</button></div>
 <div class="msg hidden" id="msg"></div>
@@ -71,6 +111,8 @@ const seen = new Set();
 const img = (p, size = 1600) => `${base}/events/${eventId}/photos/${p.id}/img/${size}`;
 const fits = (p) => p.status === 'approved' && !p.hidden && (settings.loopSource === 'all' || (settings.loopSource === 'public' ? p.src === 'public' : p.src !== 'public'));
 const fmtCode = (c) => c ? `${c.slice(0, 3)} ${c.slice(3)}` : '— —';
+const setCode = (c) => { $('#code').innerHTML = (c || '------').split('').map((d) => `<b>${d === '-' ? '–' : d}</b>`).join(''); };
+let curCode = '';
 
 function fail(text) { $('#msg').textContent = text; $('#msg').classList.remove('hidden'); }
 
@@ -106,7 +148,8 @@ async function boot() {
 
 function applyEvent(ev) {
   settings = { ...settings, ...ev.settings };
-  $('#code').textContent = fmtCode(ev.codes?.public);
+  if (ev.codes?.public !== curCode) { curCode = ev.codes?.public || ''; setCode(curCode); }
+  if (ev.qrUntil && ev.qrUntil > qrShownUntil) showQr(ev.qrUntil, curCode);
   $('#url').textContent = (ev.url || '').replace(/^https?:\/\//, '').split('/')[0] || 'live.johorstudio.com';
   $('#emptyTitle').textContent = ev.title ? `${ev.title}` : 'Photos will appear here';
   document.title = `${ev.title} · Big screen`;
@@ -180,6 +223,25 @@ function removePhoto(id) {
   if (cur) idx = Math.max(-1, loopList.findIndex((p) => p.id === cur.id) - (cur.id === id ? 1 : 0));
 }
 
+// QR popup: shown until `until` (ms), or hidden at once when until is 0.
+let qrShownUntil = 0, qrHideTimer;
+async function showQr(until, code) {
+  clearTimeout(qrHideTimer);
+  qrShownUntil = until || 0;
+  const left = qrShownUntil - Date.now();
+  if (left <= 0) { $('#qrpop').classList.remove('on'); return; }
+  const url = `${location.origin}/c/${code}`;
+  try {
+    const { default: qrcode } = await import('/vendor/qrcode/qrcode.mjs');
+    const q = qrcode(0, 'M'); q.addData(url); q.make();
+    $('#qrImg').src = q.createDataURL(12, 2);
+  } catch { /* text still shows */ }
+  $('#qrHost').textContent = location.host;
+  $('#qrCode').textContent = fmtCode(code);
+  $('#qrpop').classList.add('on');
+  qrHideTimer = setTimeout(() => $('#qrpop').classList.remove('on'), left);
+}
+
 function idleCheck() {
   const idle = Date.now() - lastNewAt > settings.idleMin * 60e3;
   $('#bubble').classList.toggle('hidden', !idle);
@@ -189,7 +251,8 @@ function connect() {
   const es = new EventSource(`${base}/events/${eventId}/stream`);
   es.addEventListener('photo', (e) => addPhoto(JSON.parse(e.data)));
   es.addEventListener('remove', (e) => removePhoto(JSON.parse(e.data).id));
-  es.addEventListener('settings', (e) => { const d = JSON.parse(e.data); settings = { ...settings, ...d.settings }; if (d.code) $('#code').textContent = fmtCode(d.code); rebuildLoop(); });
+  es.addEventListener('settings', (e) => { const d = JSON.parse(e.data); settings = { ...settings, ...d.settings }; if (d.code && d.code !== curCode) { curCode = d.code; setCode(d.code); } rebuildLoop(); });
+  es.addEventListener('qr', (e) => { const d = JSON.parse(e.data); showQr(d.until, d.code || curCode); });
   es.onerror = () => { if (es.readyState === EventSource.CLOSED) setTimeout(connect, 5000); };
   // refresh event info (code may change on a new live window) every minute
   setInterval(async () => { try { applyEvent((await get(`${base}/events/${eventId}`)).event); rebuildLoop(); } catch { /* keep going */ } }, 60000);
