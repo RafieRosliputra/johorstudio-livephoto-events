@@ -37,6 +37,14 @@ function serveStatic(req, res, pathname) {
   let st; try { st = fs.statSync(file); } catch { return false; }
   if (!st.isFile()) return false;
   const ext = path.extname(file);
+  // Public pages get the Umami script (not admin, panel or the big screen).
+  if (ext === '.html' && config.umamiId && ['index.html', 'gallery.html', 'shoot.html', '404.html'].includes(path.basename(file))) {
+    const tag = `<script defer src="${config.umamiSrc}" data-website-id="${config.umamiId}" data-domains="live.johorstudio.com"></script>\n</head>`;
+    const body = Buffer.from(fs.readFileSync(file, 'utf8').replace('</head>', tag));
+    res.writeHead(200, { 'content-type': TYPES['.html'], 'content-length': body.length, 'cache-control': 'no-cache', 'x-content-type-options': 'nosniff', 'referrer-policy': 'strict-origin-when-cross-origin' });
+    res.end(req.method === 'HEAD' ? undefined : body);
+    return true;
+  }
   // Pages, CSS and JS: revalidate every time (cheap 304 via ETag) so a deploy shows at once.
   const etag = `"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`;
   if (req.headers['if-none-match'] === etag) { res.writeHead(304, { etag }); res.end(); return true; }

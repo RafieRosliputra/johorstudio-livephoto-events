@@ -18,6 +18,9 @@ export const config = {
   accessTeam: (env.ACCESS_TEAM_DOMAIN || 'johorstudio.cloudflareaccess.com').replace(/^https?:\/\//, ''),
   accessAud: env.ACCESS_AUD || '',
   accessCertsUrl: env.ACCESS_CERTS_URL || '',          // tests only; default https://<team>/cdn-cgi/access/certs
+  // Umami analytics (ana.johorstudio.com) on the public pages; empty = off
+  umamiId: env.UMAMI_WEBSITE_ID || '',
+  umamiSrc: env.UMAMI_SRC || 'https://ana.johorstudio.com/script.js',
   devAdmin: env.DEV_ADMIN || '',                         // dev only: treat every /api/admin request as this email
   // AI moderator for guest photos (separate Python app on m10). Empty = approve without AI.
   moderatorUrl: (env.MODERATOR_URL || '').replace(/\/$/, ''),

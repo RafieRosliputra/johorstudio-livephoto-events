@@ -93,3 +93,11 @@ Lihat §9b dalam pelan. tnas = `192.168.1.131` (Tailscale `tnas`), m10 = `192.16
 - Elak upload dua kali: kunci `nama|saiz|masa EXIF` (atau `m<lastModified>`), jadual `sent_keys`; `/api/shoot/check`; upload yang terputus disambung dari bait terakhir.
 - Upload manual photographer: web /shoot (senarai status, cuba semula tanpa had bila internet putus) dan app JS Tether 4.1 ("Upload gambar dari telefon", "Senarai upload").
 - iOS: Rafi pilih tiada app; photographer iPhone guna web /shoot.
+
+## 1 Nov 2026 (pagi): laman utama + skrin LED
+- Hero: 30 gambar dari projek johorstudio.com (RTSO, Maulidur Rasul Masjid Saleng, Butterfly "Let's Hunt and Hop", Khunya Thai, APC Kota Tinggi, APC PPD Kulai) dalam `server/public/data/hero.json`; 5 petak tukar bentuk dan gambar, klik buka album.
+- How it works: ikon comel; kad 3 = skrin LED besar. WhatsApp jadi butang terapung kanan bawah; butang lain "Contact us" → johorstudio.com/contact.html. Logo → johorstudio.com.
+- Umami: set `UMAMI_WEBSITE_ID` dalam `/mnt/ssd/livephoto/livephoto.env` (page awam sahaja: utama, galeri, /shoot).
+- Skrin LED: latar polaroid hanyut, slideshow Ken Burns rawak, gambar baru: yang lama zoom out, yang baru terbang masuk kecil → muat skrin, gerak perlahan ke arah muka, 500 ms akhir penuhkan skrin (muka di tengah).
+- Muka: moderator `POST /faces` (OpenCV Haar, fail cascade dalam repo); server simpan `photos.faces`, hantar `fc` bersama gambar. Compose tukar ke opencv-python-headless (slim image tiada libGL).
+- johorstudio.com: tab LIVE EVENTS selepas Projects — PR #1 repo johorstudio-website.
