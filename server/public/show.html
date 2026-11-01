@@ -86,6 +86,9 @@
   body.idle-mouse { cursor: none; }
   .msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 20px; font-size: 20px; z-index: 20; background: var(--bg); }
   .hidden { display: none !important; }
+  /* Big screen switched off from the panel: plain black, fades in / out */
+  .blackout { position: fixed; inset: 0; z-index: 30; background: #000; opacity: 0; pointer-events: none; transition: opacity .8s; }
+  .blackout.on { opacity: 1; pointer-events: auto; }
 </style>
 </head>
 <body>
@@ -102,6 +105,7 @@
 </div>
 <div class="controls" id="controls"><button id="fsBtn" type="button">Full screen</button></div>
 <div class="msg hidden" id="msg"></div>
+<div class="blackout" id="blackout" aria-hidden="true"></div>
 
 <script type="module">
 const $ = (s) => document.querySelector(s);
@@ -157,6 +161,7 @@ function applyEvent(ev) {
   settings = { ...settings, ...ev.settings };
   if (ev.codes?.public !== curCode) { curCode = ev.codes?.public || ''; setCode(curCode); }
   if (ev.qrUntil && ev.qrUntil > qrShownUntil) showQr(ev.qrUntil, curCode);
+  $('#blackout').classList.toggle('on', ev.screenOn === false);
   $('#url').textContent = (ev.url || '').replace(/^https?:\/\//, '').split('/')[0] || 'live.johorstudio.com';
   $('#emptyTitle').textContent = ev.title ? `${ev.title}` : 'Photos will appear here';
   document.title = `${ev.title} · Big screen`;
@@ -430,6 +435,7 @@ function connect() {
   es.addEventListener('photo', (e) => addPhoto(JSON.parse(e.data)));
   es.addEventListener('remove', (e) => removePhoto(JSON.parse(e.data).id));
   es.addEventListener('settings', (e) => { const d = JSON.parse(e.data); settings = { ...settings, ...d.settings }; if (d.code && d.code !== curCode) { curCode = d.code; setCode(d.code); } rebuildLoop(); });
+  es.addEventListener('screen', (e) => $('#blackout').classList.toggle('on', !JSON.parse(e.data).on));
   es.addEventListener('qr', (e) => { const d = JSON.parse(e.data); showQr(d.until, d.code || curCode); });
   es.onerror = () => { if (es.readyState === EventSource.CLOSED) setTimeout(connect, 5000); };
   // refresh event info (code may change on a new live window) every minute
@@ -437,7 +443,22 @@ function connect() {
 }
 
 // Full screen + keep the screen awake + hide the cursor/controls when idle.
-$('#fsBtn').onclick = () => { (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {}); };
+// Full screen goes to the second screen (LED / TV) when there is one (Chrome / Edge: asks once for "window management").
+let screens = null; // already allowed: read once at start so the click goes straight to full screen
+navigator.permissions?.query({ name: 'window-management' }).then((p) => { if (p.state === 'granted') window.getScreenDetails().then((d) => { screens = d; }); }).catch(() => {});
+async function goFullscreen() {
+  if (document.fullscreenElement) return document.exitFullscreen().catch(() => {});
+  let screen;
+  try {
+    if ('getScreenDetails' in window) {
+      const d = screens || await window.getScreenDetails();
+      screen = d.screens.find((x) => !x.isPrimary && x !== d.currentScreen) || d.screens.find((x) => x !== d.currentScreen);
+    }
+  } catch { /* permission refused: this screen */ }
+  try { await document.documentElement.requestFullscreen(screen ? { screen } : undefined); }
+  catch { document.documentElement.requestFullscreen().catch(() => {}); }
+}
+$('#fsBtn').onclick = goFullscreen;
 document.addEventListener('keydown', (e) => { if (e.key === 'f' || e.key === 'F') $('#fsBtn').click(); });
 document.addEventListener('fullscreenchange', () => { $('#fsBtn').textContent = document.fullscreenElement ? 'Exit full screen' : 'Full screen'; });
 let wake = null;

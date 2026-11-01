@@ -84,6 +84,7 @@
 import { $, $$, api, esc, toast, modal, fmtDate, todayYmd, copyText, icon } from '/js/common.js';
 import { PhotoGrid, openLightbox, liveFeed } from '/js/grid.js';
 import { codeBoxes, sendCode } from '/js/codebox.js';
+import { takePhoto, confirmShot, cameraIcon } from '/js/camera.js';
 
 const PANEL = location.pathname.startsWith('/panel');
 const BASE = PANEL ? '/api/client' : '/api/admin';
@@ -187,6 +188,7 @@ function render() {
       <div class="row">
         <button class="btn" id="qrBtn">${icon.qr}Show QR on big screen</button>
         <a class="btn ghost" href="/show/${e.id}" target="_blank" rel="noopener">Open big screen</a>
+        <button class="btn ghost" id="screenBtn">${e.screenOn === false ? 'Turn on big screen' : 'Turn off big screen'}</button>
         <button class="btn ghost" id="copyLink">Copy gallery link</button>
       </div>
     </div>
@@ -222,6 +224,8 @@ function render() {
 
     <div class="card section">
       <div class="row" style="justify-content:space-between"><h3>Photos</h3><span class="small muted" id="thumbNote"></span></div>
+      <div class="row"><button class="btn small" id="stUp">${icon.up}Upload</button><button class="btn small ghost" id="stCam">${cameraIcon}Camera</button>
+        <span class="small muted" id="stWho"></span></div>
       <div class="tabs" id="ptabs">
         ${[['review', `To review (${e.reviewCount})`], ['all', `All (${e.photoCount})`], ['hidden', 'Hidden'], ['blocked', `Blocked (${e.blockedCount})`]]
           .map(([k, l]) => `<button class="tab" data-f="${k}" aria-pressed="${photoFilter === k}">${l}</button>`).join('')}
@@ -264,6 +268,16 @@ function wire(e, admin) {
   $('#backBtn').onclick = () => { $('#view').classList.remove('detail-open'); };
   $('#copyLink').onclick = () => copyText(e.url);
   qrUntil = e.qrUntil || 0; qrTick();
+  // big screen on / off (off = black screen at the event)
+  $('#screenBtn').onclick = async () => {
+    try { const r = await api('POST', `${BASE}/events/${e.id}/screen`, { on: e.screenOn === false });
+      e.screenOn = r.on; $('#screenBtn').textContent = r.on ? 'Turn off big screen' : 'Turn on big screen'; toast(r.on ? 'Big screen on' : 'Big screen off'); }
+    catch (err) { toast(err.message, 5000); }
+  };
+  // admin / organiser upload and camera: nickname needed, no AI check
+  staffWho();
+  $('#stUp').onclick = () => staffStart('pick', e);
+  $('#stCam').onclick = () => staffStart('camera', e);
   $('#qrBtn').onclick = async () => {
     try { const r = await api('POST', `${BASE}/events/${e.id}/qr`, { on: !(qrUntil > Date.now()) }); qrUntil = r.until; qrTick(); }
     catch (err) { toast(err.message, 5000); }
@@ -302,6 +316,58 @@ function wire(e, admin) {
 function confirmBox(title, text, okLabel, fn) {
   const m = modal(`<h2>${esc(title)}</h2><p style="margin:0">${esc(text)}</p><div class="row"><button class="btn danger" id="cOk">${esc(okLabel)}</button><button class="btn ghost" data-close>Cancel</button></div>`);
   $('#cOk', m.el).onclick = () => { m.close(); fn(); };
+}
+
+// ---------------- admin / organiser upload ----------------
+const nick = { get: () => { try { return localStorage.getItem('lp-staff-name') || ''; } catch { return ''; } }, set: (v) => { try { localStorage.setItem('lp-staff-name', v); } catch {} } };
+function staffWho() {
+  const n = nick.get(), w = $('#stWho');
+  if (!w) return;
+  w.innerHTML = n ? `Uploading as <b>${esc(n)}</b> · <button class="linkbtn" id="stNick">change</button>` : 'Your photos go straight to the gallery (no AI check).';
+  $('#stNick') && ($('#stNick').onclick = () => askNick(() => {}));
+}
+function askNick(then) {
+  const m = modal(`<h2>Your nickname</h2><p style="margin:0" class="muted">Shown with your photos in the gallery and on the big screen.</p>
+    <div class="field"><label for="stN">Nickname</label><input class="input" id="stN" maxlength="20" placeholder="e.g. Kak Long"></div>
+    <p class="error" id="stE"></p><div class="row"><button class="btn" id="stOk">Continue</button><button class="btn ghost" data-close>Cancel</button></div>`);
+  $('#stN', m.el).value = nick.get();
+  const ok = () => { const v = $('#stN', m.el).value.trim(); if (!v) { $('#stE', m.el).textContent = 'Type a nickname.'; return; } nick.set(v); m.close(); staffWho(); then(); };
+  $('#stOk', m.el).onclick = ok;
+  $('#stN', m.el).addEventListener('keydown', (ev) => { if (ev.key === 'Enter') ok(); });
+  $('#stN', m.el).focus();
+}
+function staffStart(action, e) {
+  const run = async () => {
+    if (action === 'camera') { const f = await takePhoto(); if (f && await confirmShot(f)) staffUpload([f], e); return; }
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true;
+    inp.onchange = () => staffUpload([...inp.files], e); inp.click();
+  };
+  if (!nick.get()) askNick(run); else run();
+}
+async function staffUpload(files, e) {
+  if (!files.length) return;
+  const m = modal(`<h2>Uploading ${files.length} photo${files.length > 1 ? 's' : ''}</h2>
+    <div class="progress"><div id="suBar"></div></div><div class="small muted" id="suStep">Preparing…</div><div class="error" id="suErr"></div>
+    <button class="btn hidden" id="suDone" data-close>Done</button>`);
+  const { preparePhoto } = await import('/js/encode.js');
+  const { uploadPhoto } = await import('/js/upload.js');
+  let ok = 0; const failed = [];
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    const set = (frac, t) => { $('#suBar', m.el).style.width = `${((i + frac) / files.length) * 100}%`; if (t) $('#suStep', m.el).textContent = t; };
+    try {
+      set(0, `${i + 1} of ${files.length} · converting`);
+      const out = await preparePhoto(f, 0.8);
+      set(0.3, `${i + 1} of ${files.length} · uploading`);
+      await uploadPhoto({ startUrl: `${BASE}/events/${e.id}/uploads`, startBody: { name: f.name.replace(/\.[^.]+$/, '') + '.webp', uploader: nick.get(), key: `${f.name}|${f.size}|m${f.lastModified || 0}` },
+        blob: out.blob, thumbs: out.thumbs, tries: Infinity, onProgress: (x) => set(0.3 + 0.7 * x) });
+      ok++;
+    } catch (err) { failed.push(`${f.name}: ${err.message}`); }
+  }
+  $('#suBar', m.el).style.width = '100%';
+  $('#suStep', m.el).textContent = `${ok} photo${ok === 1 ? '' : 's'} uploaded to the gallery.`;
+  if (failed.length) $('#suErr', m.el).innerHTML = failed.map(esc).join('<br>');
+  $('#suDone', m.el).classList.remove('hidden');
 }
 
 // QR popup on the big screen: the button shows the seconds left.

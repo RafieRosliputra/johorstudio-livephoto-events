@@ -239,6 +239,19 @@ test('organiser panel: review queue, allow / remove, request to close', async ()
   assert.equal((await A('GET', `/api/admin/events/${ev.id}`)).body.event.request.type, 'close');
 });
 
+test('admin / organiser upload with a nickname, no AI check; big screen on / off', async () => {
+  const before = modCalls;
+  assert.equal((await client('POST', `/api/client/events/${ev.id}/uploads`, { body: { name: 'x.webp', size: 10 } })).status, 400); // nickname needed
+  const up = await upload(client, `/api/client/events/${ev.id}/uploads`, fakeWebp(4000, 3000, 2000), { name: 'cam.webp', uploader: 'Kak Long' });
+  assert.equal(up.status, 200); assert.equal(up.body.photo.status, 'approved'); assert.equal(up.body.photo.by, 'Kak Long');
+  assert.equal(modCalls, before);
+  assert.ok(fs.existsSync(path.join(process.env.PHOTOS_DIR, 'EVENTS', ev.folder, 'Organiser uploads', 'cam.webp')));
+  assert.equal((await A('POST', `/api/admin/events/${ev.id}/screen`, { body: { on: false } })).body.on, false);
+  assert.equal((await client('GET', `/api/client/events/${ev.id}`)).body.event.screenOn, false);
+  await client('POST', `/api/client/events/${ev.id}/screen`, { body: { on: true } });
+  assert.equal((await A('GET', `/api/admin/events/${ev.id}`)).body.event.screenOn, true);
+});
+
 test('settings, extend, close: guests and photographers logged out, guest code changes, gallery stays', async () => {
   const s = await A('PATCH', `/api/admin/events/${ev.id}`, { body: { settings: { newSec: 4, loopSec: 6, loopSource: 'public', idleMin: 2, qrSec: 45 } } });
   assert.deepEqual(s.body.event.settings, { newSec: 4, loopSec: 6, loopSource: 'public', idleMin: 2, qrSec: 45 });
@@ -258,7 +271,7 @@ test('settings, extend, close: guests and photographers logged out, guest code c
   assert.notEqual(c.body.event.codes.public, codes.public);
   assert.equal((await photog('GET', '/api/shoot')).status, 401);
   const g = await guest('GET', `/api/e/${ev.token}`);
-  assert.equal(g.status, 200); assert.equal(g.body.guest.canUpload, false); assert.equal(g.body.photos.length, 5);
+  assert.equal(g.status, 200); assert.equal(g.body.guest.canUpload, false); assert.equal(g.body.photos.length, 6);
   assert.equal((await client('GET', `/api/client/events/${ev.id}`)).status, 200); // organiser keeps access 7 days
   assert.equal((await stranger('GET', '/api/live-status')).body.count, 0);
 });

@@ -51,7 +51,9 @@ export const eventDir = (ev) => inside(EVENTS_DIR(), ev.folder_name);
 export const photoFile = (ev, photo) => inside(eventDir(ev), photo.rel_path);
 export const thumbDir = (eventId) => path.join(config.dataDir, 'thumbs', eventId);
 export const thumbFile = (eventId, photoId, size) => path.join(thumbDir(eventId), `${photoId}-${size}.img`);
-export const sourceFolder = (source, slot) => (source === 'public' ? PUBLIC_UPLOAD : slotFolder(slot));
+// admin / organiser uploads (approved straight away) go to their own folder
+export const STAFF_UPLOAD = 'Organiser uploads';
+export const sourceFolder = (source, slot) => (source === 'public' ? PUBLIC_UPLOAD : source === 'other' ? STAFF_UPLOAD : slotFolder(slot));
 
 // Choose a free file name inside the event's slot folder, e.g. DSC01234.webp, DSC01234-2.webp
 export function uniqueRelPath(ev, folder, name) {

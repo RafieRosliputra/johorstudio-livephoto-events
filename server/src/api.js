@@ -45,6 +45,7 @@ const parseReq = (ev) => { try { return ev.request ? JSON.parse(ev.request) : nu
 
 // QR on the big screen, shown from the admin or organiser panel for settings.qrSec seconds (in memory only).
 const qrUntil = new Map(); // eventId -> ms
+const screenOff = new Set(); // events whose big screen is switched off
 const qrState = (id) => { const u = qrUntil.get(id) || 0; return u > Date.now() ? u : 0; };
 
 function staffEventJson(ev) {
@@ -54,7 +55,7 @@ function staffEventJson(ev) {
     token: ev.public_token, url: galleryUrl(ev), status: db.status(ev), startsAt: ev.starts_at, endsAt: ev.ends_at, closedAt: ev.closed_at,
     codes: { public: ev.public_code, photographer: ev.photo_code, client: ev.client_code },
     codeUrl: codeUrl(ev.public_code), publicUpload: !!ev.public_upload_on, showcase: !!ev.showcase,
-    settings: db.settingsOf(ev), request: parseReq(ev), createdAt: ev.created_at, qrUntil: qrState(ev.id),
+    settings: db.settingsOf(ev), request: parseReq(ev), createdAt: ev.created_at, qrUntil: qrState(ev.id), screenOn: !screenOff.has(ev.id),
     photoCount: c.photo_count || 0, guestCount: c.guest_count || 0, reviewCount: c.review_count || 0, blockedCount: c.blocked_count || 0,
   };
 }
@@ -355,6 +356,22 @@ for (const prefix of ['admin', 'client']) {
     const { ev } = await staffFor(req, prefix, params.id);
     storage.deletePhoto(ev, photoOfEvent(ev, params.photo));
     sendJson(res, 200, { ok: true });
+  });
+  // Admin / organiser upload or camera: needs a nickname, no AI check (approved at once).
+  r('POST', `${P}/events/:id/uploads`, async (req, res, { params }) => {
+    const { ev } = await staffFor(req, prefix, params.id);
+    const body = await readJson(req);
+    const uploader = auth.cleanName(body.uploader, 20);
+    if (!uploader) fail(400, 'Type your nickname first');
+    startUpload(res, ev, { source: 'other', slot: null, sessionId: null, uploader, name: body.name, size: body.size, ip: clientIp(req), dupKey: cleanKey(body.key) });
+  });
+  // Big screen on / off (off = black screen; the page stays open and comes back on at once).
+  r('POST', `${P}/events/:id/screen`, async (req, res, { params }) => {
+    const { ev } = await staffFor(req, prefix, params.id);
+    const body = await readJson(req);
+    if (body.on) screenOff.delete(ev.id); else screenOff.add(ev.id);
+    publish(ev.id, 'screen', { on: !!body.on });
+    sendJson(res, 200, { on: !!body.on });
   });
   // Show / hide the QR popup on the big screen (LED at the event).
   r('POST', `${P}/events/:id/qr`, async (req, res, { params }) => {
