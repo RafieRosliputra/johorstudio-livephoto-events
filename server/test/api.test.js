@@ -296,6 +296,38 @@ test('settings, extend, close: guests and photographers logged out, guest code c
   assert.equal((await stranger('GET', '/api/live-status')).body.count, 0);
 });
 
+test('download-all link: made at close, two ZIPs, 7 days, admin adds 7 more', async () => {
+  const e = (await A('GET', `/api/admin/events/${ev.id}`)).body.event;
+  assert.ok(e.download.active); assert.match(e.download.url, /\/d\/[A-Za-z0-9_-]{24}$/);
+  assert.ok(e.download.until > Date.now() + 6.9 * 86400e3);
+  assert.ok((await client('GET', `/api/client/events/${ev.id}`)).body.event.download.url);
+  const token = e.download.url.split('/d/')[1];
+  const info = (await stranger('GET', `/api/d/${token}`)).body;
+  assert.equal(info.event.title, ev.title); assert.ok(info.active);
+  assert.ok(info.parts.photographers.count > 0); assert.ok(info.parts.guests.count > 0);
+  const zip = await stranger('GET', `/api/d/${token}/zip/photographers`);
+  assert.equal(zip.status, 200); assert.equal(zip.headers.get('content-type'), 'application/zip');
+  assert.equal(Number(zip.headers.get('content-length')), zip.body.length);
+  assert.equal(zip.body.readUInt32LE(0), 0x04034b50);
+  assert.equal(zip.body.readUInt32LE(zip.body.length - 22), 0x06054b50);
+  assert.equal(zip.body.readUInt16LE(zip.body.length - 12), info.parts.photographers.count);
+  const g = await stranger('GET', `/api/d/${token}/zip/guests`);
+  assert.ok(g.body.includes(Buffer.from('Guests/')));
+  assert.equal((await stranger('GET', '/api/d/nope-nope-nope')).status, 404);
+  assert.equal((await stranger('GET', `/d/${token}`)).status, 200); // landing page
+  // expired: no download; admin adds 7 days (after payment)
+  const { DatabaseSync } = await import('node:sqlite');
+  const raw = new DatabaseSync(path.join(process.env.DATA_DIR, 'livephoto.db'));
+  raw.prepare('UPDATE events SET dl_until=? WHERE id=?').run(Date.now() - 1000, ev.id); raw.close();
+  assert.equal((await stranger('GET', `/api/d/${token}/zip/photographers`)).status, 410);
+  assert.equal((await stranger('GET', `/api/d/${token}`)).body.active, false);
+  assert.equal((await client('GET', `/api/client/events/${ev.id}`)).body.event.download.url, undefined);
+  assert.equal((await client('POST', `/api/admin/events/${ev.id}/download`, { body: { action: 'extend' } })).status, 401);
+  const ext = await A('POST', `/api/admin/events/${ev.id}/download`, { body: { action: 'extend' } });
+  assert.ok(ext.body.event.download.until > Date.now() + 6.9 * 86400e3);
+  assert.equal((await stranger('GET', `/api/d/${token}/zip/photographers`)).status, 200);
+});
+
 test('scanner adopts SMB folders with their codes', async () => {
   const meta = JSON.parse(fs.readFileSync(path.join(process.env.PHOTOS_DIR, 'EVENTS', ev.folder, '.livephoto.json'), 'utf8'));
   assert.equal(meta.photographers.length, 2);

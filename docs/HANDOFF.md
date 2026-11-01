@@ -108,3 +108,8 @@ Lihat §9b dalam pelan. tnas = `192.168.1.131` (Tailscale `tnas`), m10 = `192.16
 - Kad "Big screen" (admin + organiser): mod Photos / Black / Admin background / Background 1 / Background 2.
   Admin background satu untuk semua event (`DATA_DIR/backgrounds/admin`, kad di senarai event). Background 1 = upload per event. Background 2 = gambar tetamu ("Use as background 2").
 - Pin gambar ke skrin: butang pin pada setiap gambar (dan dalam paparan besar): Lock (sampai Release), 10 s, 20 s, 30 s, 1 min, Release. Mod skrin dan pin disimpan dalam memori (restart = kembali ke Photos, tiada pin).
+
+## 1 Nov 2026 (petang): download semua gambar
+- Bila event tamat atau ditutup, link `/d/<token>` dibuat automatik (7 hari). Admin: Copy, Send on WhatsApp, "+7 days (after RM100)", New link. Organiser nampak butang download dalam panel selagi link aktif.
+- Landing page: butiran event, tarikh tamat, 2 ZIP (Photographer photos, Guest photos), butang WhatsApp minta 7 hari lagi (RM100). Lepas tamat: link mati, gambar kekal.
+- ZIP dibina semasa download (src/zip.js, store tanpa mampatan, ZIP64 bila > 4 GB, saiz tepat dalam Content-Length). Gambar ikut format asal (kebanyakannya WebP). Gambar disorok/disekat tak dimasukkan.

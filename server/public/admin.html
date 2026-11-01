@@ -46,6 +46,9 @@
   .tab { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 5px 12px; font-size: 14px; cursor: pointer; color: var(--ink); }
   .tab[aria-pressed="true"] { background: var(--graphite); color: #fff; border-color: var(--graphite); }
   .rlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  .dlbox { border: 1px solid var(--mist); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .dlbox .url { font-family: ui-monospace, Menlo, monospace; font-size: 13px; background: var(--paper); border-radius: 6px; padding: 8px 10px; overflow-wrap: anywhere; }
+  .dlbox.off { background: #fbf3f2; }
   .pinbtn { position: absolute; right: 6px; bottom: 6px; width: 34px; height: 34px; border-radius: 50%; border: 0; background: rgba(13,17,19,.72); color: #fff;
     display: grid; place-items: center; cursor: pointer; }
   .pinbtn:hover, .pinbtn.on { background: var(--tally); }
@@ -196,6 +199,7 @@ function render() {
         <span class="row"><button class="btn small" id="reqOk">${req.type === 'activate' ? 'Approve and go live' : 'Approve and close'}</button><button class="btn small ghost" id="reqNo">Dismiss</button></span></div>` : ''}
       ${req && !admin ? `<div class="reqbox">Your request to ${req.type === 'activate' ? 'start the event' : 'close the event'} is waiting for JohorStudio.com.</div>` : ''}
       ${liveControls(e, admin)}
+      ${downloadBlock(e, admin)}
     </div>
 
     <div class="card section">
@@ -277,6 +281,26 @@ function render() {
   loadPhotos();
 }
 
+// Download-all link (made automatically when the event ends or is closed; 7 days; +7 days after payment).
+function downloadBlock(e, admin) {
+  const d = e.download;
+  if (!d) return '';
+  const until = new Date(d.until).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+  if (!admin) {
+    return d.active
+      ? `<div class="dlbox"><b>Download all photos</b><span class="small muted">Available until ${esc(until)}.</span><div><a class="btn" href="${esc(d.url)}" target="_blank" rel="noopener">${icon.dl}Open download page</a></div></div>`
+      : `<div class="dlbox off"><b>Download link expired</b><span class="small muted">Ask JohorStudio.com to add 7 more days (RM100).</span></div>`;
+  }
+  const msg = `Your photos from "${e.title}" are ready to download (available for 7 days): ${d.url}`;
+  return `<div class="dlbox ${d.active ? '' : 'off'}"><div class="row" style="justify-content:space-between"><b>Download link for the organiser</b>
+      <span class="pill ${d.active ? 'teal' : 'red'}">${d.active ? 'until ' + esc(until) : 'expired ' + esc(until)}</span></div>
+    <div class="url">${esc(d.url)}</div>
+    <div class="row"><button class="btn small" id="dlCopy">Copy link</button>
+      <a class="btn small ghost" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">${icon.wa}Send on WhatsApp</a>
+      <button class="btn small ghost" id="dlExt">+7 days (after RM100)</button>
+      <button class="linkbtn small" id="dlNew">New link</button></div></div>`;
+}
+
 function liveControls(e, admin) {
   const st = e.status;
   if (st === 'live') return `<div class="row"><span>Live since ${esc(when(e.startsAt))}, until <b>${esc(when(e.endsAt))}</b></span></div>
@@ -303,6 +327,12 @@ function wire(e, admin) {
   $('#copyLink').onclick = () => copyText(e.url);
   qrUntil = e.qrUntil || 0; qrTick();
   bigScreenCard();
+  if (e.download && admin) {
+    const dl = async (action, msg) => { try { await api('POST', `/api/admin/events/${e.id}/download`, { action }); toast(msg); await refresh(); } catch (err) { toast(err.message, 5000); } };
+    $('#dlCopy') && ($('#dlCopy').onclick = () => copyText(e.download.url));
+    $('#dlExt') && ($('#dlExt').onclick = () => confirmBox('Add 7 more days?', 'Only after the organiser has paid RM100. The same link keeps working.', 'Add 7 days', () => dl('extend', '7 days added')));
+    $('#dlNew') && ($('#dlNew').onclick = () => confirmBox('Make a new download link?', 'The old link stops working. The end date stays the same.', 'New link', () => dl('new', 'New link ready')));
+  }
   // admin / organiser upload and camera: nickname needed, no AI check
   staffWho();
   $('#stUp').onclick = () => staffStart('pick', e);

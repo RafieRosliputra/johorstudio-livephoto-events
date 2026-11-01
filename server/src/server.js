@@ -26,6 +26,7 @@ const PAGES = [
   [/^\/shoot\/?$/, 'shoot.html'],
   [/^\/show\/[0-9a-f-]{36}\/?$/, 'show.html'],
   [/^\/e\/[a-z0-9]{6,16}\/?$/, 'gallery.html'],
+  [/^\/d\/[A-Za-z0-9_-]{10,40}\/?$/, 'download.html'],          // download-all link for the organiser
 ];
 
 function serveStatic(req, res, pathname) {
@@ -38,7 +39,7 @@ function serveStatic(req, res, pathname) {
   if (!st.isFile()) return false;
   const ext = path.extname(file);
   // Public pages get the Umami script (not admin, panel or the big screen).
-  if (ext === '.html' && config.umamiId && ['index.html', 'gallery.html', 'shoot.html', '404.html'].includes(path.basename(file))) {
+  if (ext === '.html' && config.umamiId && ['index.html', 'gallery.html', 'shoot.html', 'download.html', '404.html'].includes(path.basename(file))) {
     const tag = `<script defer src="${config.umamiSrc}" data-website-id="${config.umamiId}" data-domains="live.johorstudio.com"></script>\n</head>`;
     const body = Buffer.from(fs.readFileSync(file, 'utf8').replace('</head>', tag));
     res.writeHead(200, { 'content-type': TYPES['.html'], 'content-length': body.length, 'cache-control': 'no-cache', 'x-content-type-options': 'nosniff', 'referrer-policy': 'strict-origin-when-cross-origin' });

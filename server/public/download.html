@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#20272b">
+<title>Download your photos · JohorStudio.com Live</title>
+<link rel="icon" href="/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<style>
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+  .hero { background: var(--graphite); color: var(--paper); padding: 40px 0 70px; }
+  .kick { font-size: 12px; letter-spacing: .16em; color: var(--teal-light); font-weight: 700; }
+  .hero h1 { margin: 8px 0 6px; font-size: clamp(30px, 6vw, 48px); font-stretch: 82%; line-height: 1.05; text-wrap: balance; }
+  .meta { color: #c9d3d2; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+  .box { max-width: 720px; margin: -46px auto 40px; display: flex; flex-direction: column; gap: 14px; }
+  .card { padding: 22px; display: flex; flex-direction: column; gap: 14px; }
+  .until { display: flex; gap: 12px; align-items: center; background: var(--teal-soft); color: var(--teal-dark); border-radius: 10px; padding: 12px 14px; font-weight: 600; }
+  .until.gone { background: #fbe4e2; color: #8a2a24; }
+  .until svg { flex: none; }
+  .parts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .part { border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .part h2 { margin: 0; font-size: 18px; }
+  .part .n { color: var(--steel); font-size: 14px; }
+  .part .btn { width: 100%; padding: 13px; font-size: 16px; }
+  .part.empty { opacity: .55; }
+  .tips { margin: 0; padding-left: 18px; color: var(--steel); font-size: 14px; display: flex; flex-direction: column; gap: 4px; }
+  .more { border: 1.5px dashed var(--line); border-radius: 12px; padding: 16px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+  .more b { font-size: 16px; }
+  .wa { background: #25d366; } .wa:hover { background: #1fb457; }
+  .msg { text-align: center; padding: 40px 16px; }
+</style>
+</head>
+<body>
+<header class="topbar"><div class="wrap"><a class="brand" href="https://johorstudio.com"><span class="brand-name">JohorStudio.com</span><span class="live-badge">LIVE</span></a></div></header>
+<section class="hero"><div class="wrap">
+  <div class="kick">YOUR EVENT PHOTOS</div>
+  <h1 id="title">Loading…</h1>
+  <div class="meta" id="meta"></div>
+</div></section>
+<main class="wrap" style="flex:1">
+  <div class="box" id="box">
+    <div class="card"><p class="muted" style="margin:0">Loading your download…</p></div>
+  </div>
+</main>
+<footer class="site"><div class="wrap">© PROMEDIA CREATIVE SOLUTIONS (JR0113470-V) · <a href="https://johorstudio.com">JohorStudio.com</a></div></footer>
+
+<script type="module">
+import { $, esc, fmtDate, icon } from '/js/common.js';
+const token = location.pathname.split('/')[2];
+const CLOCK = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+const mb = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(b / 1e6))} MB`);
+const when = (t) => new Date(t).toLocaleString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+
+try {
+  const r = await fetch(`/api/d/${encodeURIComponent(token)}`);
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || 'This download link is not valid');
+  const e = d.event;
+  document.title = `${e.title} · Download your photos`;
+  $('#title').textContent = e.title;
+  $('#meta').innerHTML = [fmtDate(e.date), e.organiser && `Organised by ${esc(e.organiser)}`].filter(Boolean).map((x) => `<span>${x}</span>`).join('');
+  const wa = (text) => `https://wa.me/${d.whatsapp}?text=${encodeURIComponent(text)}`;
+  const extendMsg = `Hi JohorStudio.com, I'd like to extend the photo download for "${e.title}" by ${d.days} more days (${d.extendPrice}). Link: ${location.href}`;
+  const part = (key, name, what) => {
+    const p = d.parts[key];
+    if (!p.count) return `<div class="part empty"><h2>${name}</h2><div class="n">No ${what} in this event.</div></div>`;
+    return `<div class="part"><h2>${name}</h2><div class="n">${p.count} photo${p.count === 1 ? '' : 's'} · ${mb(p.bytes)} ZIP</div>
+      <a class="btn" href="/api/d/${encodeURIComponent(token)}/zip/${key}" download>${icon.dl}Download ZIP</a></div>`;
+  };
+  if (d.active) {
+    $('#box').innerHTML = `<div class="card">
+      <div class="until">${CLOCK}<span>Files can be downloaded for ${d.days} days, until ${esc(when(d.until))}.</span></div>
+      <div class="parts">${part('photographers', 'Photographer photos', 'photographer photos')}${part('guests', 'Guest photos', 'guest photos')}</div>
+      <ul class="tips">
+        <li>Use Wi-Fi and a computer for large ZIP files. Keep the page open until the download finishes.</li>
+        <li>Photos are in full resolution, mostly in WebP format, which opens on phones, Windows, Mac and in Photoshop.</li>
+        <li>Photos that were hidden or removed during the event are not included.</li>
+      </ul>
+      <div class="more"><div><b>Need more time?</b><div class="muted small">Add ${d.days} more days for ${esc(d.extendPrice)}.</div></div>
+        <a class="btn wa" href="${wa(extendMsg)}" target="_blank" rel="noopener">${icon.wa}Request on WhatsApp</a></div>
+    </div>`;
+  } else {
+    $('#box').innerHTML = `<div class="card">
+      <div class="until gone">${CLOCK}<span>This download link expired on ${esc(when(d.until))}.</span></div>
+      <p style="margin:0">Your photos are still safe with us. To download them again, add ${d.days} more days for ${esc(d.extendPrice)}.</p>
+      <div><a class="btn wa" href="${wa(extendMsg)}" target="_blank" rel="noopener">${icon.wa}Request ${d.days} more days on WhatsApp</a></div>
+    </div>`;
+  }
+} catch (err) {
+  $('#title').textContent = 'Download not available';
+  $('#box').innerHTML = `<div class="card msg"><p style="margin:0">${esc(err.message)}. Ask JohorStudio.com for a new link.</p></div>`;
+}
+</script>
+</body>
+</html>

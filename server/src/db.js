@@ -131,6 +131,9 @@ export function openDb(file = path.join(config.dataDir, 'livephoto.db')) {
   try { db.exec("ALTER TABLE uploads ADD COLUMN dup_key TEXT NOT NULL DEFAULT ''"); } catch { /* already there */ }
   // face boxes for the big screen: '' = not checked yet, '[]' = none found
   try { db.exec("ALTER TABLE photos ADD COLUMN faces TEXT NOT NULL DEFAULT ''"); } catch { /* already there */ }
+  // download-all link for the organiser (made when the event closes, valid 7 days, admin can add 7 more)
+  try { db.exec('ALTER TABLE events ADD COLUMN dl_token TEXT'); } catch { /* already there */ }
+  try { db.exec('ALTER TABLE events ADD COLUMN dl_until INTEGER'); } catch { /* already there */ }
   db.prepare("INSERT OR IGNORE INTO meta(key,value) VALUES('schema',?)").run(String(SCHEMA_VERSION));
   return db;
 }
@@ -214,7 +217,7 @@ export function insertEvent({ id, folderName, date, title, token, publicCode, ph
 }
 
 const EDITABLE = ['folder_name', 'date', 'title', 'organiser', 'hide_name', 'public_token', 'public_code', 'photo_code', 'client_code',
-  'starts_at', 'ends_at', 'closed_at', 'public_upload_on', 'showcase', 'settings', 'request'];
+  'starts_at', 'ends_at', 'closed_at', 'public_upload_on', 'showcase', 'settings', 'request', 'dl_token', 'dl_until'];
 export function updateEvent(id, fields) {
   for (const [k, v] of Object.entries(fields)) {
     if (!EDITABLE.includes(k)) continue;
@@ -354,3 +357,7 @@ export const openUploadByKey = (eventId, key) => q("SELECT * FROM uploads WHERE 
 // ---------------- faces (big screen zoom target) ----------------
 export const photosNeedingFaces = (limit = 5) => q("SELECT * FROM photos WHERE faces='' AND status='approved' ORDER BY seq DESC LIMIT ?").all(limit);
 export function setFaces(id, faces) { q('UPDATE photos SET faces=? WHERE id=?').run(JSON.stringify(faces || []), id); return getPhoto(id); }
+
+// ---------------- download-all ----------------
+export const eventByDownloadToken = (token) => q('SELECT * FROM events WHERE dl_token=? AND deleted_at IS NULL').get(token);
+export const zipPhotos = (eventId) => q("SELECT * FROM photos WHERE event_id=? AND status='approved' AND hidden=0 ORDER BY seq").all(eventId);

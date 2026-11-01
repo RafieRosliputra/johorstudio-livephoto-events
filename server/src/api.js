@@ -15,6 +15,7 @@ import { sniff, imageSizeOfFile, stripWebpMetadata } from './imageinfo.js';
 import { subscribe, publish, publishPhoto, setPhotoSerializer, viewerCount } from './live.js';
 import { findFaces, checkPhoto } from './moderation.js';
 import { apkInfo, refreshApk, sendApk } from './apk.js';
+import { zipPlan } from './zip.js';
 import { Router, HttpError, fail, sendJson, readJson, readBody, clientIp, randomToken, shortToken, uuid } from './http.js';
 
 export const router = new Router();
@@ -76,14 +77,30 @@ function sendBg(req, res, file) {
 }
 const qrState = (id) => { const u = qrUntil.get(id) || 0; return u > Date.now() ? u : 0; };
 
-function staffEventJson(ev) {
+// ---- download-all link: made when the event ends or is closed, valid DL_DAYS, +DL_DAYS each time the admin extends ----
+const DL_DAYS = 7;
+const dlUrl = (ev) => `${config.publicUrl}/d/${ev.dl_token}`;
+function ensureDownload(ev) {
+  const st = db.status(ev);
+  if (ev.dl_token || (st !== 'closed' && st !== 'ended')) return ev;
+  return db.updateEvent(ev.id, { dl_token: randomToken(18), dl_until: Date.now() + DL_DAYS * 86400e3 });
+}
+const dlActive = (ev) => !!ev.dl_token && (ev.dl_until || 0) > Date.now();
+function dlJson(ev, role) {
+  if (!ev.dl_token) return null;
+  if (role === 'client' && !dlActive(ev)) return { active: false, until: ev.dl_until };
+  return { url: dlUrl(ev), until: ev.dl_until, active: dlActive(ev) };
+}
+
+function staffEventJson(ev, role = 'admin') {
+  ev = ensureDownload(ev);
   const c = db.eventCounts(ev.id);
   return {
     id: ev.id, folder: ev.folder_name, date: ev.date, title: ev.title, organiser: ev.organiser, hideName: !!ev.hide_name,
     token: ev.public_token, url: galleryUrl(ev), status: db.status(ev), startsAt: ev.starts_at, endsAt: ev.ends_at, closedAt: ev.closed_at,
     codes: { public: ev.public_code, photographer: ev.photo_code, client: ev.client_code },
     codeUrl: codeUrl(ev.public_code), publicUpload: !!ev.public_upload_on, showcase: !!ev.showcase,
-    settings: db.settingsOf(ev), request: parseReq(ev), createdAt: ev.created_at, qrUntil: qrState(ev.id), screenMode: screenMode.get(ev.id) || 'photos', pin: pinState(ev.id), bg: bgInfo(ev),
+    settings: db.settingsOf(ev), request: parseReq(ev), createdAt: ev.created_at, download: dlJson(ev, role), qrUntil: qrState(ev.id), screenMode: screenMode.get(ev.id) || 'photos', pin: pinState(ev.id), bg: bgInfo(ev),
     photoCount: c.photo_count || 0, guestCount: c.guest_count || 0, reviewCount: c.review_count || 0, blockedCount: c.blocked_count || 0,
   };
 }
@@ -131,6 +148,56 @@ r('GET', '/api/live-status', (req, res) => {
   if (origin && config.siteOrigins.includes(origin)) Object.assign(headers, { 'access-control-allow-origin': origin, vary: 'Origin' });
   const live = db.nowLive().map((e) => ({ id: e.id, name: e.hide_name ? 'Event in progress' : e.title, organiser: e.organiser || '', date: e.date, startsAt: e.starts_at, endsAt: e.ends_at }));
   sendJson(res, 200, { live, count: live.length }, headers);
+});
+
+// ---------------- download all (organiser link) ----------------
+function dlEvent(token) {
+  const ev = db.eventByDownloadToken(String(token || ''));
+  if (!ev) fail(404, 'This download link is not valid');
+  return ev;
+}
+function zipEntries(ev, part) {
+  const used = new Set();
+  const out = [];
+  for (const p of db.zipPhotos(ev.id)) {
+    const guest = p.source === 'public';
+    if ((part === 'guests') !== guest) continue;
+    const file = storage.photoFile(ev, p);
+    let st; try { st = fs.statSync(file); } catch { continue; }
+    let name = guest ? `Guests/${path.posix.basename(p.rel_path)}` : p.rel_path;
+    for (let n = 2; used.has(name.toLowerCase()); n++) name = name.replace(/(\.[^.]+)?$/, (m) => ` (${n})${m}`);
+    used.add(name.toLowerCase());
+    out.push({ name, file, size: st.size, mtime: st.mtimeMs });
+  }
+  return out;
+}
+r('GET', '/api/d/:token', (req, res, { params }) => {
+  const ev = dlEvent(params.token);
+  const parts = {};
+  for (const part of ['photographers', 'guests']) {
+    const e = zipEntries(ev, part);
+    parts[part] = { count: e.length, bytes: e.length ? zipPlan(e).size : 0 };
+  }
+  sendJson(res, 200, {
+    event: { title: ev.title, date: ev.date, organiser: ev.organiser, url: galleryUrl(ev) },
+    until: ev.dl_until, active: dlActive(ev), days: DL_DAYS, extendPrice: 'RM100', whatsapp: config.whatsapp, parts,
+  });
+});
+r('GET', '/api/d/:token/zip/:part', (req, res, { params }) => {
+  const ev = dlEvent(params.token);
+  if (!dlActive(ev)) fail(410, 'This download link has expired');
+  if (!['photographers', 'guests'].includes(params.part)) fail(404, 'Not found');
+  requireStorage();
+  const entries = zipEntries(ev, params.part);
+  if (!entries.length) fail(404, 'No photos here');
+  const plan = zipPlan(entries);
+  const fname = `${storage.cleanTitle(ev.title) || 'Event'} - ${params.part === 'guests' ? 'Guests' : 'Photographers'}.zip`;
+  res.writeHead(200, {
+    'content-type': 'application/zip', 'content-length': plan.size, 'cache-control': 'private, no-store',
+    'content-disposition': `attachment; filename="${fname.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, '')}"; filename*=UTF-8''${encodeURIComponent(fname)}`,
+  });
+  if (req.method === 'HEAD') return res.end();
+  plan.pipe(res);
 });
 
 // ---------------- guest gallery ----------------
@@ -352,7 +419,7 @@ for (const prefix of ['admin', 'client']) {
   const P = `/api/${prefix}`;
   r('GET', `${P}/events/:id`, async (req, res, { params }) => {
     const { ev, role } = await staffFor(req, prefix, params.id);
-    const out = { event: staffEventJson(ev), viewers: viewerCount(ev.id), role };
+    const out = { event: staffEventJson(ev, role), viewers: viewerCount(ev.id), role };
     if (role === 'admin') {
       out.photographers = db.listPhotographers(ev.id);
       out.devices = db.activeDevices(ev.id);
@@ -470,11 +537,11 @@ r('POST', '/api/client/events/:id/request', async (req, res, { params }) => {
   if (!['activate', 'close'].includes(body.type)) fail(400, 'Unknown request');
   const startsAt = body.type === 'activate' ? (intOrNull(body.startsAt) || Date.now()) : null;
   db.updateEvent(ev.id, { request: JSON.stringify({ type: body.type, startsAt, at: Date.now() }) });
-  sendJson(res, 200, { event: staffEventJson(db.getEvent(ev.id)) });
+  sendJson(res, 200, { event: staffEventJson(db.getEvent(ev.id), 'client') });
 });
 r('GET', '/api/client/me', (req, res) => {
   const s = auth.requireSession(req, 'client');
-  sendJson(res, 200, { event: staffEventJson(s.event) });
+  sendJson(res, 200, { event: staffEventJson(s.event, 'client') });
 });
 
 // ---------------- admin only ----------------
@@ -580,6 +647,20 @@ A('POST', '/events/:id/close', (req, res, { params }) => {
   try { storage.writeMeta(out); } catch { /* ignore */ }
   publish(ev.id, 'closed', {});
   sendJson(res, 200, { event: staffEventJson(out) });
+});
+// Download link: {action: 'extend'} adds 7 days (after payment), 'create' makes one now, 'new' replaces the link.
+A('POST', '/events/:id/download', async (req, res, { params }) => {
+  const ev = eventOr404(params.id);
+  const body = await readJson(req);
+  const t = Date.now();
+  let f;
+  if (body.action === 'extend') {
+    if (!ev.dl_token) fail(400, 'There is no download link yet');
+    f = { dl_until: Math.max(t, ev.dl_until || 0) + DL_DAYS * 86400e3 };
+  } else if (body.action === 'create' || body.action === 'new') {
+    f = { dl_token: randomToken(18), dl_until: body.action === 'new' && ev.dl_until > t ? ev.dl_until : t + DL_DAYS * 86400e3 };
+  } else fail(400, 'Unknown action');
+  sendJson(res, 200, { event: staffEventJson(db.updateEvent(ev.id, f)) });
 });
 A('POST', '/events/:id/request', async (req, res, { params }) => {
   const ev = eventOr404(params.id);
