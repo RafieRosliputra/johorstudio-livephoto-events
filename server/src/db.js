@@ -105,7 +105,9 @@ CREATE TABLE IF NOT EXISTS sent_keys (
 );
 `;
 
-export const DEFAULT_SETTINGS = { newSec: 3, loopSec: 5, loopSource: 'all', idleMin: 3, qrSec: 30 };
+// bubble* = the 'Upload your photos!' message on the big screen when no new photo comes in
+export const DEFAULT_SETTINGS = { newSec: 3, loopSec: 5, loopSource: 'all', idleMin: 3, qrSec: 30,
+  bubbleOn: true, bubbleText: 'Upload your photos!', bubbleEvery: 120, bubbleFor: 15 };
 
 let db;
 const now = () => Date.now();

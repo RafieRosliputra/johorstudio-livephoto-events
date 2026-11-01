@@ -46,6 +46,11 @@
   .tab { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 5px 12px; font-size: 14px; cursor: pointer; color: var(--ink); }
   .tab[aria-pressed="true"] { background: var(--graphite); color: #fff; border-color: var(--graphite); }
   .rlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  .bub { border: 1px solid var(--mist); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .bubgrid { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; }
+  .bubgrid .inline { justify-content: space-between; }
+  @media (max-width: 640px) { .bubgrid { grid-template-columns: 1fr 1fr; } .bubgrid label:first-child { grid-column: 1 / -1; } }
+  #bubOn[aria-pressed="true"] { background: var(--teal-soft); color: var(--teal-dark); border-color: transparent; }
   .dlbox { border: 1px solid var(--mist); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
   .dlbox .url { font-family: ui-monospace, Menlo, monospace; font-size: 13px; background: var(--paper); border-radius: 6px; padding: 8px 10px; overflow-wrap: anywhere; }
   .dlbox.off { background: #fbf3f2; }
@@ -223,6 +228,18 @@ function render() {
       <div class="seg" id="modeSeg">
         ${[['photos', 'Photos'], ['black', 'Black'], ['admin', 'Admin background'], ['bg1', 'Background 1'], ['bg2', 'Background 2']].map(([k, l]) => `<button type="button" data-mode="${k}">${l}</button>`).join('')}
       </div>
+      <div class="bub">
+        <div class="row" style="justify-content:space-between"><b>"Upload your photos!" message</b>
+          <span class="row"><button class="btn small" id="bubNow" type="button">Show now</button>
+          <button class="btn small ghost" id="bubOn" type="button" aria-pressed="${e.settings.bubbleOn !== false}">${e.settings.bubbleOn !== false ? 'Showing: on' : 'Hidden'}</button></span></div>
+        <span class="small muted">Appears on the big screen when no new photo has come in for a while.</span>
+        <div class="bubgrid">
+          <label class="inline">Message<input class="input" id="bubText" maxlength="60" value="${esc(e.settings.bubbleText || 'Upload your photos!')}"></label>
+          <label class="inline">Show every (sec)<input class="input" type="number" min="10" max="3600" id="bubEvery" value="${e.settings.bubbleEvery || 120}"></label>
+          <label class="inline">Stay on screen (sec)<input class="input" type="number" min="3" max="600" id="bubFor" value="${e.settings.bubbleFor || 15}"></label>
+        </div>
+        <div><button class="btn small ghost" id="bubSave" type="button">Save message</button></div>
+      </div>
       <div class="bgs">
         <div class="bgc"><div class="th" data-th="admin"></div><b>Admin background</b><span class="small muted">${admin ? 'Change it in the list on the left (all events).' : 'Set by JohorStudio.com.'}</span></div>
         <div class="bgc"><div class="th" data-th="bg1"></div><b>Background 1</b><span class="small muted">Your backdrop for this event.</span>
@@ -243,7 +260,6 @@ function render() {
       <div class="grid4">
         <label class="inline">New photo shown (s)<input class="input" type="number" min="1" max="30" id="sNew" value="${e.settings.newSec}"></label>
         <label class="inline">Loop photo shown (s)<input class="input" type="number" min="1" max="60" id="sLoop" value="${e.settings.loopSec}"></label>
-        <label class="inline">Upload bubble after (min)<input class="input" type="number" min="1" max="60" id="sIdle" value="${e.settings.idleMin}"></label>
         <label class="inline">QR on screen (s)<input class="input" type="number" min="5" max="600" id="sQr" value="${e.settings.qrSec}"></label>
         <label class="inline">Photos in the loop<select class="input" id="sSrc">
           ${['all', 'public', 'photographer'].map((v) => `<option value="${v}" ${e.settings.loopSource === v ? 'selected' : ''}>${{ all: 'All photos', public: 'Guests only', photographer: 'Photographers only' }[v]}</option>`).join('')}</select></label>
@@ -362,7 +378,7 @@ function wire(e, admin) {
   });
   if (admin) {
     $('#saveSet').onclick = () => patch({ organiser: $('#sOrg').value, hideName: $('#sHide').checked, publicUpload: $('#sUp').checked, showcase: $('#sShow').checked,
-      settings: { newSec: $('#sNew').value, loopSec: $('#sLoop').value, idleMin: $('#sIdle').value, qrSec: $('#sQr').value, loopSource: $('#sSrc').value } }, 'Settings saved');
+      settings: { newSec: $('#sNew').value, loopSec: $('#sLoop').value, qrSec: $('#sQr').value, loopSource: $('#sSrc').value } }, 'Settings saved');
     $$('[data-slot]').forEach((s) => s.onchange = async () => { try { await api('POST', `/api/admin/events/${e.id}/slots`, { from: Number(s.dataset.slot), to: Number(s.value) }); refresh(); } catch (err) { toast(err.message, 5000); } });
     $$('[data-kick]').forEach((b) => b.onclick = async () => { await api('DELETE', `/api/admin/events/${e.id}/devices/${b.dataset.kick}`); refresh(); });
     $('#newLinkBtn').onclick = () => confirmBox('Change the gallery link?', 'The old link stops working.', 'Change link', () => patch({ newLink: true }, 'New link ready'));
@@ -409,6 +425,16 @@ function bigScreenCard() {
     try { const r = await api('POST', `${BASE}/events/${cur.event.id}/screen`, { mode: b.dataset.mode }); cur.event.screenMode = r.mode; paint(); }
     catch (err) { toast(err.message, 5000); }
   });
+  // "Upload your photos!" message
+  const bub = async (body, msg) => {
+    try { const r = await api('POST', `${BASE}/events/${cur.event.id}/bubble`, body); cur.event.settings = r.settings;
+      const on = r.settings.bubbleOn !== false; $('#bubOn').setAttribute('aria-pressed', String(on)); $('#bubOn').textContent = on ? 'Showing: on' : 'Hidden'; toast(msg); }
+    catch (err) { toast(err.message, 5000); }
+  };
+  const fields = () => ({ text: $('#bubText').value, every: $('#bubEvery').value, for: $('#bubFor').value });
+  $('#bubNow').onclick = () => bub({ ...fields(), now: true }, 'Showing on the big screen now');
+  $('#bubOn').onclick = () => { const on = $('#bubOn').getAttribute('aria-pressed') !== 'true'; bub({ ...fields(), on }, on ? 'Message on' : 'Message hidden'); };
+  $('#bubSave').onclick = () => bub(fields(), 'Message saved');
   $('#bg1Up').onclick = () => pickPicture(async (blob) => {
     const r = await fetch(`${BASE}/events/${cur.event.id}/bg/bg1`, { method: 'PUT', body: blob, credentials: 'same-origin' });
     const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Upload failed');

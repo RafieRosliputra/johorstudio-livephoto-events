@@ -74,7 +74,7 @@
   .qrtext .u { color: #1f6f68; font-weight: 800; }
   .portrait .qrcard { flex-direction: column; text-align: center; } .portrait .qrtext { max-width: 80vw; } .portrait .qrcard img { width: 60vw; }
   .bubble { position: absolute; left: 50%; bottom: calc(var(--u) * 7); transform: translateX(-50%); background: var(--tally); color: #fff; font-weight: 800; font-size: clamp(22px, 4.2vw, 90px);
-    padding: .35em .9em; border-radius: 999px; box-shadow: 0 10px 50px rgba(224,86,78,.55); z-index: 7; white-space: nowrap; }
+    padding: .35em .9em; border-radius: 1em; box-shadow: 0 10px 50px rgba(224,86,78,.55); z-index: 7; max-width: 86vw; text-align: center; text-wrap: balance; }
   @media (prefers-reduced-motion: no-preference) { .bubble { animation: bob 1.4s ease-in-out infinite; } }
   @keyframes bob { 0%, 100% { transform: translateX(-50%) scale(.9); } 50% { transform: translateX(-50%) scale(1.08); } }
   .empty { position: absolute; inset: 0 0 calc(var(--u) * 6); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2vh; text-align: center; padding: 4vw; }
@@ -155,7 +155,7 @@ async function boot() {
   if (pinFromEvent) setPin(pinFromEvent);
   next();
   connect();
-  setInterval(idleCheck, 5000);
+  setInterval(bubbleTick, 1000);
 }
 
 function applyEvent(ev) {
@@ -437,6 +437,7 @@ function addPhoto(p) {
   loop.push(p);
   queue.push(p);
   lastNewAt = Date.now();
+  bubbleUntil = 0;
   $('#bubble').classList.add('hidden');
   if (!showingNew) next();
 }
@@ -468,9 +469,23 @@ async function showQr(until, code) {
   qrHideTimer = setTimeout(() => $('#qrpop').classList.remove('on'), left);
 }
 
-function idleCheck() {
-  const idle = Date.now() - lastNewAt > settings.idleMin * 60e3;
-  $('#bubble').classList.toggle('hidden', !idle);
+// "Upload your photos!": after bubbleEvery s without a new photo, show for bubbleFor s, then wait again.
+let bubbleUntil = 0;
+function bubbleTick() {
+  const el = $('#bubble'), now = Date.now();
+  el.textContent = settings.bubbleText || 'Upload your photos!';
+  if (settings.bubbleOn === false || screenMode !== 'photos') { el.classList.add('hidden'); bubbleUntil = 0; return; }
+  if (bubbleUntil) {
+    if (now < bubbleUntil) return;
+    el.classList.add('hidden'); bubbleUntil = 0; lastNewAt = now; // wait a full interval again
+    return;
+  }
+  if (!showingNew && now - lastNewAt >= (settings.bubbleEvery || 120) * 1000) showBubble();
+}
+function showBubble() {
+  bubbleUntil = Date.now() + (settings.bubbleFor || 15) * 1000;
+  $('#bubble').textContent = settings.bubbleText || 'Upload your photos!';
+  $('#bubble').classList.remove('hidden');
 }
 
 function connect() {
@@ -479,6 +494,7 @@ function connect() {
   es.addEventListener('remove', (e) => removePhoto(JSON.parse(e.data).id));
   es.addEventListener('settings', (e) => { const d = JSON.parse(e.data); settings = { ...settings, ...d.settings }; if (d.code && d.code !== curCode) { curCode = d.code; setCode(d.code); } rebuildLoop(); });
   es.addEventListener('screen', (e) => { const d = JSON.parse(e.data); setScreen(d.mode, d.v); });
+  es.addEventListener('bubble', () => { settings.bubbleOn = true; showBubble(); });
   es.addEventListener('pin', (e) => { const d = JSON.parse(e.data); setPin(d.pin, d.photo); });
   es.addEventListener('qr', (e) => { const d = JSON.parse(e.data); showQr(d.until, d.code || curCode); });
   es.onerror = () => { if (es.readyState === EventSource.CLOSED) setTimeout(connect, 5000); };

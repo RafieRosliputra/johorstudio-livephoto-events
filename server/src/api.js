@@ -515,6 +515,22 @@ for (const prefix of ['admin', 'client']) {
     publish(ev.id, 'pin', { pin, photo: photoJson(p) });
     sendJson(res, 200, { pin });
   });
+  // "Upload your photos!" message: on/off, text, every N s without new photos, shown for N s; {now: true} shows it at once.
+  r('POST', `${P}/events/:id/bubble`, async (req, res, { params }) => {
+    const { ev } = await staffFor(req, prefix, params.id);
+    const body = await readJson(req);
+    const s = { ...db.settingsOf(ev) };
+    const num = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(v)) || lo));
+    if ('on' in body) s.bubbleOn = !!body.on;
+    if (body.text != null) s.bubbleText = String(body.text).replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 60) || 'Upload your photos!';
+    if (body.every != null) s.bubbleEvery = num(body.every, 10, 3600);
+    if (body.for != null) s.bubbleFor = num(body.for, 3, 600);
+    if (body.now) s.bubbleOn = true; // "Show now" also switches it on
+    const out = db.updateEvent(ev.id, { settings: JSON.stringify(s) });
+    publish(ev.id, 'settings', { settings: db.settingsOf(out), code: out.public_code });
+    if (body.now) publish(ev.id, 'bubble', { now: true });
+    sendJson(res, 200, { settings: db.settingsOf(out) });
+  });
   // Show / hide the QR popup on the big screen (LED at the event).
   r('POST', `${P}/events/:id/qr`, async (req, res, { params }) => {
     const { ev } = await staffFor(req, prefix, params.id);

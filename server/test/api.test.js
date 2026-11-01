@@ -262,6 +262,12 @@ test('admin / organiser upload with a nickname, no AI check; big screen on / off
   assert.equal((await client('GET', `/api/client/events/${ev.id}/bg/bg1`)).status, 200);
   assert.equal((await stranger('GET', `/api/client/events/${ev.id}/bg/bg1`)).status, 401);
   await client('POST', `/api/client/events/${ev.id}/screen`, { body: { mode: 'photos' } });
+  // "Upload your photos!" message: organiser changes text and timing, hides it, "Show now" turns it back on
+  const b1 = await client('POST', `/api/client/events/${ev.id}/bubble`, { body: { text: 'Share your <b>best</b> shot!', every: 60, for: 10, on: false } });
+  assert.equal(b1.body.settings.bubbleText, 'Share your bbest/b shot!'); assert.equal(b1.body.settings.bubbleEvery, 60);
+  assert.equal(b1.body.settings.bubbleFor, 10); assert.equal(b1.body.settings.bubbleOn, false);
+  assert.equal((await A('POST', `/api/admin/events/${ev.id}/bubble`, { body: { now: true } })).body.settings.bubbleOn, true);
+  assert.equal((await stranger('POST', `/api/client/events/${ev.id}/bubble`, { body: { now: true } })).status, 401);
   // pin a photo: timed or locked, then released
   const pin = await client('POST', `/api/client/events/${ev.id}/pin`, { body: { photoId: photogPhoto.id, sec: 10 } });
   assert.ok(pin.body.pin.until > Date.now());
@@ -274,7 +280,8 @@ test('admin / organiser upload with a nickname, no AI check; big screen on / off
 
 test('settings, extend, close: guests and photographers logged out, guest code changes, gallery stays', async () => {
   const s = await A('PATCH', `/api/admin/events/${ev.id}`, { body: { settings: { newSec: 4, loopSec: 6, loopSource: 'public', idleMin: 2, qrSec: 45 } } });
-  assert.deepEqual({ ...s.body.event.settings, bg2: undefined }, { newSec: 4, loopSec: 6, loopSource: 'public', idleMin: 2, qrSec: 45, bg2: undefined });
+  const st = s.body.event.settings;
+  assert.deepEqual([st.newSec, st.loopSec, st.loopSource, st.qrSec], [4, 6, 'public', 45]);
   // QR on the big screen: organiser or admin shows it for qrSec seconds, then hides it
   const qr = await client('POST', `/api/client/events/${ev.id}/qr`, { body: { on: true } });
   assert.equal(qr.status, 200); assert.ok(qr.body.until > Date.now() + 40e3 && qr.body.until <= Date.now() + 45e3);
