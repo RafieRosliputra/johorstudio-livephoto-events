@@ -3,8 +3,8 @@
 import { esc, icon } from './common.js';
 
 export class PhotoGrid {
-  constructor(el, { urlFor, filter = () => true, onTile, gap = 4 } = {}) {
-    this.el = el; this.urlFor = urlFor; this.filter = filter; this.onTile = onTile; this.gap = gap;
+  constructor(el, { urlFor, filter = () => true, onTile, gap = 4, tileExtra, onAction } = {}) {
+    this.el = el; this.urlFor = urlFor; this.filter = filter; this.onTile = onTile; this.gap = gap; this.tileExtra = tileExtra; this.onAction = onAction;
     this.photos = []; this.fresh = new Set(); this.pending = []; this.flushTimer = null;
     this.io = new IntersectionObserver((ents) => {
       for (const e of ents) if (e.isIntersecting) { const img = e.target; img.src = img.dataset.src; this.io.unobserve(img); }
@@ -13,6 +13,8 @@ export class PhotoGrid {
     new ResizeObserver(() => { if (Math.abs(el.clientWidth - w) > 2) { w = el.clientWidth; this.render(); } }).observe(el);
     el.addEventListener('click', (e) => {
       const t = e.target.closest('.jtile');
+      const act = e.target.closest('[data-act]');
+      if (t && act && this.onAction) { e.stopPropagation(); this.onAction(this.visible().find((p) => p.id === t.dataset.id), act.dataset.act, act); return; }
       if (t) this.onTile?.(this.visible().find((p) => p.id === t.dataset.id), this.visible());
     });
   }
@@ -54,7 +56,7 @@ export class PhotoGrid {
     const html = rows.map(([r, h]) => `<div class="jrow" style="height:${h.toFixed(1)}px">${r.map(([p, ar]) =>
       `<div class="jtile${p.hidden ? ' is-hidden' : ''}" data-id="${p.id}" style="width:${(ar * h).toFixed(1)}px">` +
       `<img alt="" data-src="${esc(this.urlFor(p, ar * h > 600 ? 1600 : 480))}">` +
-      (this.fresh.has(p.id) ? '<span class="tag">NEW</span>' : '') + (p.hidden ? '<span class="hid">Hidden</span>' : '') + '</div>').join('')}</div>`).join('');
+      (this.fresh.has(p.id) ? '<span class="tag">NEW</span>' : '') + (p.hidden ? '<span class="hid">Hidden</span>' : '') + (this.tileExtra ? this.tileExtra(p) : '') + '</div>').join('')}</div>`).join('');
     this.el.innerHTML = html;
     this.el.querySelectorAll('img').forEach((img) => {
       img.addEventListener('load', () => img.classList.add('loaded'), { once: true });
@@ -96,7 +98,7 @@ export function openLightbox(list, start, { urlFor, downloadUrl, actions = () =>
 
 // Live updates: SSE first, polling every 5 s as a fallback (30 s while the tab is hidden).
 // getCursor() returns the newest photo seq the page already has.
-export function liveFeed({ streamUrl, pollUrl, getCursor, onPhoto, onRemove, onGone, onStatus, onClosed, onSettings, onQr }) {
+export function liveFeed({ streamUrl, pollUrl, getCursor, onPhoto, onRemove, onGone, onStatus, onClosed, onSettings, onQr, onPin, onScreen }) {
   let es = null, pollTimer, alive = true;
   const status = (s) => onStatus?.(s);
   const catchUp = async () => {
@@ -119,6 +121,8 @@ export function liveFeed({ streamUrl, pollUrl, getCursor, onPhoto, onRemove, onG
     es.addEventListener('closed', () => onClosed?.());
     es.addEventListener('settings', (e) => onSettings?.(JSON.parse(e.data)));
     es.addEventListener('qr', (e) => onQr?.(JSON.parse(e.data)));
+    es.addEventListener('pin', (e) => onPin?.(JSON.parse(e.data)));
+    es.addEventListener('screen', (e) => onScreen?.(JSON.parse(e.data)));
     es.onerror = () => {
       status('reconnecting');
       if (es && es.readyState === EventSource.CLOSED) { es = null; clearTimeout(pollTimer); pollTimer = setTimeout(() => { poll(); setTimeout(() => alive && !es && connect(), 30000); }, 5000); }

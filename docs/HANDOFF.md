@@ -101,3 +101,10 @@ Lihat §9b dalam pelan. tnas = `192.168.1.131` (Tailscale `tnas`), m10 = `192.16
 - Skrin LED: latar polaroid hanyut, slideshow Ken Burns rawak, gambar baru: yang lama zoom out, yang baru terbang masuk kecil → muat skrin, gerak perlahan ke arah muka, 500 ms akhir penuhkan skrin (muka di tengah).
 - Muka: moderator `POST /faces` (OpenCV Haar, fail cascade dalam repo); server simpan `photos.faces`, hantar `fc` bersama gambar. Compose tukar ke opencv-python-headless (slim image tiada libGL).
 - johorstudio.com: tab LIVE EVENTS selepas Projects — PR #1 repo johorstudio-website.
+
+## 1 Nov 2026 (petang): kawalan skrin besar
+- Tetamu: butang kamera + skrin sahkan (✓ / ✗). Admin/organiser: Upload + Camera dengan nickname, terus lulus (folder `Organiser uploads`).
+- Full screen di /show cuba skrin kedua (Window Management API, Chrome/Edge).
+- Kad "Big screen" (admin + organiser): mod Photos / Black / Admin background / Background 1 / Background 2.
+  Admin background satu untuk semua event (`DATA_DIR/backgrounds/admin`, kad di senarai event). Background 1 = upload per event. Background 2 = gambar tetamu ("Use as background 2").
+- Pin gambar ke skrin: butang pin pada setiap gambar (dan dalam paparan besar): Lock (sampai Release), 10 s, 20 s, 30 s, 1 min, Release. Mod skrin dan pin disimpan dalam memori (restart = kembali ke Photos, tiada pin).

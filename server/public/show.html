@@ -87,7 +87,7 @@
   .msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 20px; font-size: 20px; z-index: 20; background: var(--bg); }
   .hidden { display: none !important; }
   /* Big screen switched off from the panel: plain black, fades in / out */
-  .blackout { position: fixed; inset: 0; z-index: 30; background: #000; opacity: 0; pointer-events: none; transition: opacity .8s; }
+  .blackout { position: fixed; inset: 0; z-index: 30; background: #000 center / cover no-repeat; opacity: 0; pointer-events: none; transition: opacity .8s; }
   .blackout.on { opacity: 1; pointer-events: auto; }
 </style>
 </head>
@@ -152,6 +152,7 @@ async function boot() {
   loop = all.sort((a, b) => a.seq - b.seq);
   rebuildLoop();
   buildScatter();
+  if (pinFromEvent) setPin(pinFromEvent);
   next();
   connect();
   setInterval(idleCheck, 5000);
@@ -161,7 +162,8 @@ function applyEvent(ev) {
   settings = { ...settings, ...ev.settings };
   if (ev.codes?.public !== curCode) { curCode = ev.codes?.public || ''; setCode(curCode); }
   if (ev.qrUntil && ev.qrUntil > qrShownUntil) showQr(ev.qrUntil, curCode);
-  $('#blackout').classList.toggle('on', ev.screenOn === false);
+  setScreen(ev.screenMode || 'photos');
+  pinFromEvent = ev.pin || null;
   $('#url').textContent = (ev.url || '').replace(/^https?:\/\//, '').split('/')[0] || 'live.johorstudio.com';
   $('#emptyTitle').textContent = ev.title ? `${ev.title}` : 'Photos will appear here';
   document.title = `${ev.title} · Big screen`;
@@ -296,10 +298,50 @@ function leave(f, frames = pick(OUT)(), ms = 1300) {
 }
 
 // Loop: one photo every loopSec; new photos interrupt, then the loop carries on where it was.
+// ---------- screen mode (photos / black / background) and pinned photo ----------
+let screenMode = 'photos', screenV = 0, pinFromEvent = null, pinned = null; // pinned = { p, until } (until 0 = locked)
+function setScreen(mode, v) {
+  const el = $('#blackout');
+  if (mode === screenMode && (!v || v === screenV)) return;
+  screenMode = mode; screenV = v || Date.now();
+  if (mode === 'photos') { el.classList.remove('on'); return; }
+  if (mode === 'black') { el.style.backgroundImage = ''; el.classList.add('on'); return; }
+  const url = `${base}/events/${eventId}/bg/${mode}?v=${screenV}`;
+  const pre = new Image();
+  pre.onload = pre.onerror = () => { el.style.backgroundImage = `url("${url}")`; el.classList.add('on'); };
+  pre.src = url;
+}
+function setPin(pin, photo) {
+  if (!pin) { if (pinned) { pinned = null; if (!showingNew) next(); } return; }
+  const p = loop.find((x) => x.id === pin.id) || photo;
+  if (!p) return;
+  pinned = { p, until: pin.until || 0 };
+  if (!showingNew) next(); // a new photo flying in finishes first, then the pin takes over
+}
+async function showPinned() {
+  const { p, until } = pinned;
+  const recheck = until ? Math.max(200, until - Date.now()) : 5000;
+  if (cur?.p.id !== p.id) {
+    const src = img(p);
+    const my = gen;
+    await loadImg(src);
+    if (my !== gen || !pinned || pinned.p.id !== p.id) return;
+    const old = cur;
+    const f = makeFrame(p, src);
+    cur = f;
+    kenBurns(f, until ? until - Date.now() + 1500 : 40000, { faces: true });
+    f.el.animate(pick(IN)(), { duration: reduce ? 400 : 1300, easing: 'ease-in-out' });
+    leave(old);
+  }
+  loopTimer = setTimeout(next, recheck);
+}
+
 let gen = 0; // only the newest call of next() may change the screen
 async function next() {
   clearTimeout(loopTimer);
   const my = ++gen;
+  if (pinned && pinned.until && pinned.until <= Date.now()) pinned = null;
+  if (pinned) return showPinned();
   if (queue.length) return showNew();
   if (!loopList.length) { leave(cur); cur = null; loopTimer = setTimeout(next, 2000); return; }
   if (!pols.some((el) => el.classList.contains('has'))) fillScatter();
@@ -399,6 +441,7 @@ function addPhoto(p) {
   if (!showingNew) next();
 }
 function removePhoto(id) {
+  if (pinned && pinned.p.id === id) { pinned = null; setTimeout(next, 0); }
   loop = loop.filter((p) => p.id !== id);
   queue = queue.filter((p) => p.id !== id);
   const cur = loopList[idx];
@@ -435,7 +478,8 @@ function connect() {
   es.addEventListener('photo', (e) => addPhoto(JSON.parse(e.data)));
   es.addEventListener('remove', (e) => removePhoto(JSON.parse(e.data).id));
   es.addEventListener('settings', (e) => { const d = JSON.parse(e.data); settings = { ...settings, ...d.settings }; if (d.code && d.code !== curCode) { curCode = d.code; setCode(d.code); } rebuildLoop(); });
-  es.addEventListener('screen', (e) => $('#blackout').classList.toggle('on', !JSON.parse(e.data).on));
+  es.addEventListener('screen', (e) => { const d = JSON.parse(e.data); setScreen(d.mode, d.v); });
+  es.addEventListener('pin', (e) => { const d = JSON.parse(e.data); setPin(d.pin, d.photo); });
   es.addEventListener('qr', (e) => { const d = JSON.parse(e.data); showQr(d.until, d.code || curCode); });
   es.onerror = () => { if (es.readyState === EventSource.CLOSED) setTimeout(connect, 5000); };
   // refresh event info (code may change on a new live window) every minute

@@ -45,7 +45,35 @@ const parseReq = (ev) => { try { return ev.request ? JSON.parse(ev.request) : nu
 
 // QR on the big screen, shown from the admin or organiser panel for settings.qrSec seconds (in memory only).
 const qrUntil = new Map(); // eventId -> ms
-const screenOff = new Set(); // events whose big screen is switched off
+// Big screen mode per event: 'photos' (normal) | 'black' | 'admin' | 'bg1' | 'bg2' (in memory; a restart goes back to photos)
+const screenMode = new Map();
+const SCREEN_MODES = ['photos', 'black', 'admin', 'bg1', 'bg2'];
+// Photo pinned to the big screen: eventId -> { id, until } (until 0 = locked until Release)
+const pins = new Map();
+const pinState = (id) => { const p = pins.get(id); if (p && p.until && p.until < Date.now()) { pins.delete(id); return null; } return p || null; };
+// Backgrounds: admin (one for every event) and organiser background 1 (per event) are files; background 2 is a guest photo.
+const bgDir = () => path.join(config.dataDir, 'backgrounds');
+const bgFile = (name) => path.join(bgDir(), name);
+const adminBg = () => bgFile('admin');
+const bg1File = (evId) => bgFile(`event-${evId}`);
+function bgInfo(ev) {
+  const s = db.settingsOf(ev);
+  const p2 = s.bg2 ? db.getPhoto(s.bg2) : null;
+  return { admin: fs.existsSync(adminBg()), bg1: fs.existsSync(bg1File(ev.id)), bg2: p2 && p2.event_id === ev.id ? p2.id : null };
+}
+async function saveBg(req, file) {
+  const buf = await readBody(req, 15 * 1024 * 1024);
+  if (!['webp', 'jpeg'].includes(sniff(buf))) fail(415, 'Use a JPEG or WebP picture');
+  fs.mkdirSync(bgDir(), { recursive: true });
+  fs.writeFileSync(file + '.tmp', buf);
+  fs.renameSync(file + '.tmp', file);
+}
+function sendBg(req, res, file) {
+  let st; try { st = fs.statSync(file); } catch { fail(404, 'No background'); }
+  const buf = fs.readFileSync(file);
+  res.writeHead(200, { 'content-type': sniff(buf) === 'webp' ? 'image/webp' : 'image/jpeg', 'content-length': st.size, 'cache-control': 'private, no-cache', etag: `"bg-${Math.floor(st.mtimeMs)}"` });
+  res.end(req.method === 'HEAD' ? undefined : buf);
+}
 const qrState = (id) => { const u = qrUntil.get(id) || 0; return u > Date.now() ? u : 0; };
 
 function staffEventJson(ev) {
@@ -55,7 +83,7 @@ function staffEventJson(ev) {
     token: ev.public_token, url: galleryUrl(ev), status: db.status(ev), startsAt: ev.starts_at, endsAt: ev.ends_at, closedAt: ev.closed_at,
     codes: { public: ev.public_code, photographer: ev.photo_code, client: ev.client_code },
     codeUrl: codeUrl(ev.public_code), publicUpload: !!ev.public_upload_on, showcase: !!ev.showcase,
-    settings: db.settingsOf(ev), request: parseReq(ev), createdAt: ev.created_at, qrUntil: qrState(ev.id), screenOn: !screenOff.has(ev.id),
+    settings: db.settingsOf(ev), request: parseReq(ev), createdAt: ev.created_at, qrUntil: qrState(ev.id), screenMode: screenMode.get(ev.id) || 'photos', pin: pinState(ev.id), bg: bgInfo(ev),
     photoCount: c.photo_count || 0, guestCount: c.guest_count || 0, reviewCount: c.review_count || 0, blockedCount: c.blocked_count || 0,
   };
 }
@@ -365,13 +393,60 @@ for (const prefix of ['admin', 'client']) {
     if (!uploader) fail(400, 'Type your nickname first');
     startUpload(res, ev, { source: 'other', slot: null, sessionId: null, uploader, name: body.name, size: body.size, ip: clientIp(req), dupKey: cleanKey(body.key) });
   });
-  // Big screen on / off (off = black screen; the page stays open and comes back on at once).
+  // Big screen mode: photos, black, or a background (admin / organiser 1 / organiser 2).
   r('POST', `${P}/events/:id/screen`, async (req, res, { params }) => {
     const { ev } = await staffFor(req, prefix, params.id);
     const body = await readJson(req);
-    if (body.on) screenOff.delete(ev.id); else screenOff.add(ev.id);
-    publish(ev.id, 'screen', { on: !!body.on });
-    sendJson(res, 200, { on: !!body.on });
+    const mode = SCREEN_MODES.includes(body.mode) ? body.mode : body.on === false ? 'black' : 'photos';
+    const bg = bgInfo(ev);
+    if ((mode === 'admin' && !bg.admin) || (mode === 'bg1' && !bg.bg1) || (mode === 'bg2' && !bg.bg2)) fail(400, 'Set that background first');
+    if (mode === 'photos') screenMode.delete(ev.id); else screenMode.set(ev.id, mode);
+    publish(ev.id, 'screen', { mode, v: Date.now() });
+    sendJson(res, 200, { mode });
+  });
+  // Background pictures for the big screen.
+  r('GET', `${P}/events/:id/bg/:which`, async (req, res, { params }) => {
+    const { ev } = await staffFor(req, prefix, params.id);
+    if (params.which === 'admin') return sendBg(req, res, adminBg());
+    if (params.which === 'bg1') return sendBg(req, res, bg1File(ev.id));
+    if (params.which === 'bg2') { const id = bgInfo(ev).bg2; if (!id) fail(404, 'No background'); return serveImage(req, res, ev, db.getPhoto(id), 'orig', false, 'private, no-cache'); }
+    fail(404, 'Not found');
+  });
+  r('PUT', `${P}/events/:id/bg/bg1`, async (req, res, { params }) => {
+    const { ev } = await staffFor(req, prefix, params.id);
+    await saveBg(req, bg1File(ev.id));
+    if (screenMode.get(ev.id) === 'bg1') publish(ev.id, 'screen', { mode: 'bg1', v: Date.now() });
+    sendJson(res, 200, { bg: bgInfo(ev) });
+  });
+  r('DELETE', `${P}/events/:id/bg/bg1`, async (req, res, { params }) => {
+    const { ev } = await staffFor(req, prefix, params.id);
+    fs.rmSync(bg1File(ev.id), { force: true });
+    if (screenMode.get(ev.id) === 'bg1') { screenMode.delete(ev.id); publish(ev.id, 'screen', { mode: 'photos' }); }
+    sendJson(res, 200, { bg: bgInfo(ev) });
+  });
+  // Background 2 = a guest photo of this event (or none).
+  r('POST', `${P}/events/:id/bg/bg2`, async (req, res, { params }) => {
+    const { ev } = await staffFor(req, prefix, params.id);
+    const body = await readJson(req);
+    let id = null;
+    if (body.photoId) { const p = photoOfEvent(ev, body.photoId); if (p.source !== 'public') fail(400, 'Background 2 comes from a guest photo'); id = p.id; }
+    const s = { ...db.settingsOf(ev), bg2: id };
+    const out = db.updateEvent(ev.id, { settings: JSON.stringify(s) });
+    if (screenMode.get(ev.id) === 'bg2') { if (id) publish(ev.id, 'screen', { mode: 'bg2', v: Date.now() }); else { screenMode.delete(ev.id); publish(ev.id, 'screen', { mode: 'photos' }); } }
+    sendJson(res, 200, { bg: bgInfo(out) });
+  });
+  // Pin a photo to the big screen: sec 10/20/30/60, or 0 = locked until released. {release: true} lets the slideshow carry on.
+  r('POST', `${P}/events/:id/pin`, async (req, res, { params }) => {
+    const { ev } = await staffFor(req, prefix, params.id);
+    const body = await readJson(req);
+    if (body.release) { pins.delete(ev.id); publish(ev.id, 'pin', { pin: null }); return sendJson(res, 200, { pin: null }); }
+    const p = photoOfEvent(ev, body.photoId);
+    if (p.status !== 'approved') fail(400, 'Allow the photo first');
+    const sec = [0, 10, 20, 30, 60].includes(Number(body.sec)) ? Number(body.sec) : 0;
+    const pin = { id: p.id, until: sec ? Date.now() + sec * 1000 : 0 };
+    pins.set(ev.id, pin);
+    publish(ev.id, 'pin', { pin, photo: photoJson(p) });
+    sendJson(res, 200, { pin });
   });
   // Show / hide the QR popup on the big screen (LED at the event).
   r('POST', `${P}/events/:id/qr`, async (req, res, { params }) => {
@@ -404,6 +479,11 @@ r('GET', '/api/client/me', (req, res) => {
 
 // ---------------- admin only ----------------
 const A = (method, p, h) => r(method, `/api/admin${p}`, async (req, res, ctx) => { const admin = await auth.requireAdmin(req); return h(req, res, ctx, admin); });
+// Admin background: one picture for the big screen of every event.
+A('GET', '/background', (req, res) => sendBg(req, res, adminBg()));
+A('PUT', '/background', async (req, res) => { await saveBg(req, adminBg()); sendJson(res, 200, { ok: true }); });
+A('DELETE', '/background', (req, res) => { fs.rmSync(adminBg(), { force: true }); sendJson(res, 200, { ok: true }); });
+A('GET', '/background/info', (req, res) => sendJson(res, 200, { admin: fs.existsSync(adminBg()) }));
 
 A('GET', '/me', (req, res, ctx, admin) => sendJson(res, 200, { email: admin.email, storageOnline: storage.storageOnline(), publicUrl: config.publicUrl, maxLive: config.maxLiveEvents }));
 A('GET', '/events', (req, res) => {

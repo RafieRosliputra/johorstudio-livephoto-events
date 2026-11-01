@@ -246,15 +246,35 @@ test('admin / organiser upload with a nickname, no AI check; big screen on / off
   assert.equal(up.status, 200); assert.equal(up.body.photo.status, 'approved'); assert.equal(up.body.photo.by, 'Kak Long');
   assert.equal(modCalls, before);
   assert.ok(fs.existsSync(path.join(process.env.PHOTOS_DIR, 'EVENTS', ev.folder, 'Organiser uploads', 'cam.webp')));
-  assert.equal((await A('POST', `/api/admin/events/${ev.id}/screen`, { body: { on: false } })).body.on, false);
-  assert.equal((await client('GET', `/api/client/events/${ev.id}`)).body.event.screenOn, false);
-  await client('POST', `/api/client/events/${ev.id}/screen`, { body: { on: true } });
-  assert.equal((await A('GET', `/api/admin/events/${ev.id}`)).body.event.screenOn, true);
+  assert.equal((await A('POST', `/api/admin/events/${ev.id}/screen`, { body: { mode: 'black' } })).body.mode, 'black');
+  assert.equal((await client('GET', `/api/client/events/${ev.id}`)).body.event.screenMode, 'black');
+  // backgrounds: admin (all events), organiser 1 (upload), organiser 2 (a guest photo)
+  assert.equal((await client('POST', `/api/client/events/${ev.id}/screen`, { body: { mode: 'admin' } })).status, 400); // not set yet
+  const jpg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(200)]);
+  assert.equal((await A('PUT', '/api/admin/background', { raw: jpg })).status, 200);
+  assert.equal((await client('PUT', '/api/admin/background', { raw: jpg })).status, 401); // organiser cannot change it
+  assert.equal((await client('PUT', `/api/client/events/${ev.id}/bg/bg1`, { raw: jpg })).body.bg.bg1, true);
+  const guestPhoto = (await A('GET', `/api/admin/events/${ev.id}/photos`)).body.photos.find((p) => p.src === 'public' && p.status === 'approved');
+  const photogPhoto = (await A('GET', `/api/admin/events/${ev.id}/photos`)).body.photos.find((p) => p.src === 'photographer');
+  assert.equal((await client('POST', `/api/client/events/${ev.id}/bg/bg2`, { body: { photoId: photogPhoto.id } })).status, 400);
+  assert.equal((await client('POST', `/api/client/events/${ev.id}/bg/bg2`, { body: { photoId: guestPhoto.id } })).body.bg.bg2, guestPhoto.id);
+  for (const m of ['admin', 'bg1', 'bg2']) assert.equal((await client('POST', `/api/client/events/${ev.id}/screen`, { body: { mode: m } })).body.mode, m);
+  assert.equal((await client('GET', `/api/client/events/${ev.id}/bg/bg1`)).status, 200);
+  assert.equal((await stranger('GET', `/api/client/events/${ev.id}/bg/bg1`)).status, 401);
+  await client('POST', `/api/client/events/${ev.id}/screen`, { body: { mode: 'photos' } });
+  // pin a photo: timed or locked, then released
+  const pin = await client('POST', `/api/client/events/${ev.id}/pin`, { body: { photoId: photogPhoto.id, sec: 10 } });
+  assert.ok(pin.body.pin.until > Date.now());
+  const lock = await A('POST', `/api/admin/events/${ev.id}/pin`, { body: { photoId: photogPhoto.id, sec: 0 } });
+  assert.equal(lock.body.pin.until, 0);
+  assert.equal((await A('GET', `/api/admin/events/${ev.id}`)).body.event.pin.id, photogPhoto.id);
+  await client('POST', `/api/client/events/${ev.id}/pin`, { body: { release: true } });
+  assert.equal((await A('GET', `/api/admin/events/${ev.id}`)).body.event.pin, null);
 });
 
 test('settings, extend, close: guests and photographers logged out, guest code changes, gallery stays', async () => {
   const s = await A('PATCH', `/api/admin/events/${ev.id}`, { body: { settings: { newSec: 4, loopSec: 6, loopSource: 'public', idleMin: 2, qrSec: 45 } } });
-  assert.deepEqual(s.body.event.settings, { newSec: 4, loopSec: 6, loopSource: 'public', idleMin: 2, qrSec: 45 });
+  assert.deepEqual({ ...s.body.event.settings, bg2: undefined }, { newSec: 4, loopSec: 6, loopSource: 'public', idleMin: 2, qrSec: 45, bg2: undefined });
   // QR on the big screen: organiser or admin shows it for qrSec seconds, then hides it
   const qr = await client('POST', `/api/client/events/${ev.id}/qr`, { body: { on: true } });
   assert.equal(qr.status, 200); assert.ok(qr.body.until > Date.now() + 40e3 && qr.body.until <= Date.now() + 45e3);

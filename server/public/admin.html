@@ -46,6 +46,20 @@
   .tab { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 5px 12px; font-size: 14px; cursor: pointer; color: var(--ink); }
   .tab[aria-pressed="true"] { background: var(--graphite); color: #fff; border-color: var(--graphite); }
   .rlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  .pinbtn { position: absolute; right: 6px; bottom: 6px; width: 34px; height: 34px; border-radius: 50%; border: 0; background: rgba(13,17,19,.72); color: #fff;
+    display: grid; place-items: center; cursor: pointer; }
+  .pinbtn:hover, .pinbtn.on { background: var(--tally); }
+  .pinbtn svg { width: 17px; height: 17px; }
+  .jtile .bg2tag { position: absolute; left: 6px; bottom: 6px; background: var(--teal); color: #fff; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 4px; }
+  .seg { display: flex; flex-wrap: wrap; gap: 6px; }
+  .seg button { border: 1.5px solid var(--line); background: #fff; color: var(--ink); border-radius: 999px; padding: 7px 14px; font: 600 14px var(--font); cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--graphite); border-color: var(--graphite); color: #fff; }
+  .seg button:disabled { opacity: .4; cursor: default; }
+  .bgs { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+  .bgc { border: 1px solid var(--mist); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+  .bgc .th { aspect-ratio: 16 / 9; border-radius: 6px; background: #20272b center / cover no-repeat; display: grid; place-items: center; color: #9fb0b2; font-size: 12px; }
+  .pinnow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: #fbe4e2; color: #8a2a24; border-radius: 8px; padding: 8px 12px; font-size: 14px; }
+  .pinmenu { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .rcard { border: 1px solid var(--mist); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; background: #fff; }
   .rcard img { width: 100%; height: 200px; object-fit: cover; background: #2b3438; cursor: zoom-in; }
   .rcard .rb { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
@@ -73,6 +87,11 @@
       <div class="apkcard hidden" id="apkCard">
         <div><b>JS Tether app</b> <span class="small muted" id="apkVer"></span></div>
         <div class="row"><a class="btn small" href="/api/admin/app.apk" download id="apkDl">Download APK</a><button class="btn small ghost" id="apkRefresh">Check for update</button></div>
+      </div>
+      <div class="apkcard hidden" id="abgCard">
+        <div><b>Big screen background</b> <span class="small muted">same for every event</span></div>
+        <div class="bgc" style="border:0;padding:0"><div class="th" id="abgTh">No picture yet</div></div>
+        <div class="row"><button class="btn small" id="abgUp">Upload</button><button class="btn small ghost hidden" id="abgDel">Remove</button></div>
       </div>
       <div id="elist" style="display:flex;flex-direction:column;gap:8px"></div>
     </aside>
@@ -117,6 +136,7 @@ async function start() {
   await loadEvents();
   setInterval(loadEvents, 30000);
   showApk(await api('GET', '/api/admin/app').catch(() => ({})));
+  adminBgCard();
   $('#apkRefresh').onclick = async () => { $('#apkRefresh').disabled = true; const r = await api('POST', '/api/admin/app/refresh').catch((e) => { toast(e.message); return {}; }); showApk(r); toast(r.apk ? `JS Tether ${r.apk.version} is the newest` : 'No APK found in GitHub Releases'); $('#apkRefresh').disabled = false; };
 }
 function showApk(d) {
@@ -188,8 +208,22 @@ function render() {
       <div class="row">
         <button class="btn" id="qrBtn">${icon.qr}Show QR on big screen</button>
         <a class="btn ghost" href="/show/${e.id}" target="_blank" rel="noopener">Open big screen</a>
-        <button class="btn ghost" id="screenBtn">${e.screenOn === false ? 'Turn on big screen' : 'Turn off big screen'}</button>
         <button class="btn ghost" id="copyLink">Copy gallery link</button>
+      </div>
+    </div>
+
+    <div class="card section" id="bigCard">
+      <h3>Big screen</h3>
+      <div id="pinNow"></div>
+      <div class="small muted">Showing on the screen now:</div>
+      <div class="seg" id="modeSeg">
+        ${[['photos', 'Photos'], ['black', 'Black'], ['admin', 'Admin background'], ['bg1', 'Background 1'], ['bg2', 'Background 2']].map(([k, l]) => `<button type="button" data-mode="${k}">${l}</button>`).join('')}
+      </div>
+      <div class="bgs">
+        <div class="bgc"><div class="th" data-th="admin"></div><b>Admin background</b><span class="small muted">${admin ? 'Change it in the list on the left (all events).' : 'Set by JohorStudio.com.'}</span></div>
+        <div class="bgc"><div class="th" data-th="bg1"></div><b>Background 1</b><span class="small muted">Your backdrop for this event.</span>
+          <div class="row"><button class="btn small" id="bg1Up">Upload</button><button class="btn small ghost" id="bg1Del">Remove</button></div></div>
+        <div class="bgc"><div class="th" data-th="bg2"></div><b>Background 2</b><span class="small muted">Pick a guest photo: tap the pin on it, then "Use as background 2".</span></div>
       </div>
     </div>
 
@@ -268,12 +302,7 @@ function wire(e, admin) {
   $('#backBtn').onclick = () => { $('#view').classList.remove('detail-open'); };
   $('#copyLink').onclick = () => copyText(e.url);
   qrUntil = e.qrUntil || 0; qrTick();
-  // big screen on / off (off = black screen at the event)
-  $('#screenBtn').onclick = async () => {
-    try { const r = await api('POST', `${BASE}/events/${e.id}/screen`, { on: e.screenOn === false });
-      e.screenOn = r.on; $('#screenBtn').textContent = r.on ? 'Turn off big screen' : 'Turn on big screen'; toast(r.on ? 'Big screen on' : 'Big screen off'); }
-    catch (err) { toast(err.message, 5000); }
-  };
+  bigScreenCard();
   // admin / organiser upload and camera: nickname needed, no AI check
   staffWho();
   $('#stUp').onclick = () => staffStart('pick', e);
@@ -316,6 +345,101 @@ function wire(e, admin) {
 function confirmBox(title, text, okLabel, fn) {
   const m = modal(`<h2>${esc(title)}</h2><p style="margin:0">${esc(text)}</p><div class="row"><button class="btn danger" id="cOk">${esc(okLabel)}</button><button class="btn ghost" data-close>Cancel</button></div>`);
   $('#cOk', m.el).onclick = () => { m.close(); fn(); };
+}
+
+// ---------------- big screen: mode, backgrounds, pinned photo ----------------
+const PIN_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4h6l-1 5 3 3v2H7v-2l3-3z"/><path d="M12 14v6"/></svg>';
+let paintBig = () => {};
+function bigScreenCard() {
+  const bgUrl = (w) => `${BASE}/events/${cur.event.id}/bg/${w}?v=${Date.now()}`;
+  const paint = () => {
+    const e = cur.event;
+    if (!$('#modeSeg')) return;
+    $$('#modeSeg [data-mode]').forEach((b) => {
+      const m = b.dataset.mode;
+      b.setAttribute('aria-pressed', String((e.screenMode || 'photos') === m));
+      b.disabled = (m === 'admin' && !e.bg.admin) || (m === 'bg1' && !e.bg.bg1) || (m === 'bg2' && !e.bg.bg2);
+    });
+    for (const w of ['admin', 'bg1', 'bg2']) {
+      const th = $(`[data-th="${w}"]`);
+      th.style.backgroundImage = e.bg[w] ? `url("${w === 'bg2' ? imgUrl({ id: e.bg.bg2 }, 480) : bgUrl(w)}")` : '';
+      th.textContent = e.bg[w] ? '' : 'Not set';
+    }
+    $('#bg1Del').classList.toggle('hidden', !e.bg.bg1);
+    $('#bg1Up').textContent = e.bg.bg1 ? 'Replace' : 'Upload';
+    const pn = e.pin;
+    $('#pinNow').innerHTML = pn ? `<div class="pinnow">${PIN_ICON.replace('<svg', '<svg width="18" height="18"')}<span>A photo is pinned to the big screen${pn.until ? ` until ${new Date(pn.until).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : ' (locked)'}.</span>
+      <button class="btn small danger" id="pinRel">Release</button></div>` : '';
+    $('#pinRel') && ($('#pinRel').onclick = () => pinPhoto(e, null));
+    $$('.pinbtn').forEach((b) => b.classList.toggle('on', !!pn && b.closest('.jtile')?.dataset.id === pn.id));
+  };
+  paintBig = paint;
+  paint();
+  $$('#modeSeg [data-mode]').forEach((b) => b.onclick = async () => {
+    try { const r = await api('POST', `${BASE}/events/${cur.event.id}/screen`, { mode: b.dataset.mode }); cur.event.screenMode = r.mode; paint(); }
+    catch (err) { toast(err.message, 5000); }
+  });
+  $('#bg1Up').onclick = () => pickPicture(async (blob) => {
+    const r = await fetch(`${BASE}/events/${cur.event.id}/bg/bg1`, { method: 'PUT', body: blob, credentials: 'same-origin' });
+    const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Upload failed');
+    cur.event.bg = d.bg; paint(); toast('Background 1 saved');
+  });
+  $('#bg1Del').onclick = async () => { const e = cur.event; const d = await api('DELETE', `${BASE}/events/${e.id}/bg/bg1`); e.bg = d.bg; if (e.screenMode === 'bg1') e.screenMode = 'photos'; paint(); };
+}
+// Pick a picture, shrink it to 2560 px JPEG in the browser (fast to upload, sharp on a 4K screen).
+function pickPicture(send) {
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*';
+  inp.onchange = async () => {
+    const f = inp.files[0]; if (!f) return;
+    try {
+      const bmp = await createImageBitmap(f);
+      const k = Math.min(1, 2560 / Math.max(bmp.width, bmp.height));
+      const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+      c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+      const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.88));
+      await send(blob);
+    } catch (err) { toast(err.message || 'Could not read that picture', 5000); }
+  };
+  inp.click();
+}
+function adminBgCard() {
+  $('#abgCard').classList.remove('hidden');
+  const paint = (has) => {
+    $('#abgTh').style.backgroundImage = has ? `url("/api/admin/background?v=${Date.now()}")` : '';
+    $('#abgTh').textContent = has ? '' : 'No picture yet';
+    $('#abgDel').classList.toggle('hidden', !has);
+    $('#abgUp').textContent = has ? 'Replace' : 'Upload';
+  };
+  api('GET', '/api/admin/background/info').then((d) => paint(d.admin)).catch(() => {});
+  $('#abgUp').onclick = () => pickPicture(async (blob) => {
+    const r = await fetch('/api/admin/background', { method: 'PUT', body: blob, credentials: 'same-origin' });
+    if (!r.ok) throw new Error((await r.json()).error || 'Upload failed');
+    paint(true); toast('Admin background saved for every event'); if (cur) refresh();
+  });
+  $('#abgDel').onclick = async () => { await api('DELETE', '/api/admin/background'); paint(false); if (cur) refresh(); };
+}
+async function pinPhoto(e, p, sec) {
+  try {
+    const r = await api('POST', `${BASE}/events/${e.id}/pin`, p ? { photoId: p.id, sec } : { release: true });
+    cur.event.pin = r.pin; paintBig(); toast(p ? (sec ? `Pinned for ${sec < 60 ? sec + ' s' : '1 min'}` : 'Pinned until you release it') : 'Released');
+  } catch (err) { toast(err.message, 5000); }
+}
+// Pin menu: Lock / 10 s / 20 s / 30 s / 1 min / Release, plus "Use as background 2" for guest photos.
+function pinMenu(e, p) {
+  const pinned = e.pin && e.pin.id === p.id;
+  const m = modal(`<h2>Pin to big screen</h2>
+    <div class="pinmenu">${[[0, 'Lock'], [10, '10 sec'], [20, '20 sec'], [30, '30 sec'], [60, '1 min']].map(([v, l]) => `<button class="btn ${v ? 'ghost' : ''}" data-sec="${v}">${l}</button>`).join('')}
+      <button class="btn danger" data-rel ${e.pin ? '' : 'disabled'}>Release</button></div>
+    <p class="small muted" style="margin:0">Lock keeps this photo on the screen until you press Release.${pinned ? ' This photo is pinned now.' : ''}</p>
+    ${p.src === 'public' ? `<button class="btn ghost" data-bg2>${e.bg?.bg2 === p.id ? 'This is background 2' : 'Use as background 2'}</button>` : ''}
+    <button class="btn ghost" data-close>Cancel</button>`);
+  $$('[data-sec]', m.el).forEach((b) => b.onclick = () => { m.close(); pinPhoto(e, p, Number(b.dataset.sec)); });
+  $('[data-rel]', m.el).onclick = () => { m.close(); pinPhoto(e, null); };
+  $('[data-bg2]', m.el) && ($('[data-bg2]', m.el).onclick = async () => {
+    m.close();
+    try { const d = await api('POST', `${BASE}/events/${e.id}/bg/bg2`, { photoId: p.id }); cur.event.bg = d.bg; paintBig(); grid?.render(); toast('Background 2 set'); }
+    catch (err) { toast(err.message, 5000); }
+  });
 }
 
 // ---------------- admin / organiser upload ----------------
@@ -425,10 +549,14 @@ async function loadPhotos() {
     });
   } else {
     el.innerHTML = '<div class="jgrid" id="grid"></div>';
-    grid = new PhotoGrid($('#grid'), { urlFor: imgUrl, onTile: (p, list) => {
+    grid = new PhotoGrid($('#grid'), { urlFor: imgUrl,
+      tileExtra: (p) => (p.status === 'approved' ? `<button class="pinbtn${cur.event.pin && cur.event.pin.id === p.id ? ' on' : ''}" type="button" data-act="pin" aria-label="Pin to big screen">${PIN_ICON}</button>` : '') + (cur.event.bg?.bg2 === p.id ? '<span class="bg2tag">BG 2</span>' : ''),
+      onAction: (p) => pinMenu(cur.event, p),
+      onTile: (p, list) => {
       const lb = openLightbox(list, p, { urlFor: imgUrl, downloadUrl: (x) => `${BASE}/events/${e.id}/photos/${x.id}/img/orig?dl=1`,
-        actions: (x) => `<button class="btn small light" data-lh>${x.hidden ? 'Show' : 'Hide'}</button><button class="btn small danger" data-lr>Remove</button>` });
+        actions: (x) => `${x.status === 'approved' ? '<button class="btn small light" data-lp>Pin to screen</button>' : ''}<button class="btn small light" data-lh>${x.hidden ? 'Show' : 'Hide'}</button><button class="btn small danger" data-lr>Remove</button>` });
       document.querySelector('.lightbox').addEventListener('click', (ev) => {
+        if (ev.target.closest('[data-lp]')) { const x = lb.current(); lb.close(); pinMenu(cur.event, x); }
         if (ev.target.closest('[data-lh]')) { act(lb.current(), 'hide'); lb.close(); }
         if (ev.target.closest('[data-lr]')) { act(lb.current(), 'remove'); lb.close(); }
       });
@@ -437,7 +565,8 @@ async function loadPhotos() {
   }
   feed?.stop();
   feed = liveFeed({ streamUrl: `${BASE}/events/${e.id}/stream`, pollUrl: `${BASE}/events/${e.id}/photos`, getCursor: () => Math.max(0, ...photos.map((p) => p.seq)),
-    onPhoto: () => scheduleRefresh(), onRemove: () => scheduleRefresh(), onQr: (d) => { qrUntil = d.until; qrTick(); } });
+    onPhoto: () => scheduleRefresh(), onRemove: () => scheduleRefresh(), onQr: (d) => { qrUntil = d.until; qrTick(); },
+    onPin: (d) => { cur.event.pin = d.pin; paintBig(); }, onScreen: (d) => { cur.event.screenMode = d.mode; paintBig(); } });
   if (!PANEL) makeMissingThumbs(e);
 }
 let refreshTimer;
