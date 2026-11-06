@@ -350,7 +350,8 @@ async function showQr(url, label, num) {
   const q = qrcode(0, 'M'); q.addData(url); q.make();
   const m = modal(`<div style="text-align:center;display:flex;flex-direction:column;align-items:center;gap:10px">
     <div><span class="brand-name">JohorStudio.com</span> <span class="live-badge">LIVE</span></div>
-    <div class="small muted" style="font-weight:700;letter-spacing:.08em;text-transform:uppercase">${esc(label)} · ${esc(num)}</div>
+    <div class="small muted" style="font-weight:700;letter-spacing:.08em;text-transform:uppercase">${esc(label)}</div>
+    <div style="font-size:56px;font-weight:800;font-stretch:80%;letter-spacing:.08em;line-height:1;font-variant-numeric:tabular-nums">${esc(num)}</div>
     <img alt="QR code" style="width:min(300px,80vw);height:auto;image-rendering:pixelated" src="${q.createDataURL(8, 8)}">
     <button class="linkbtn dlink" id="qrCopy">${esc(url.replace('https://', ''))}</button>
     <button class="btn ghost small" data-close>Close</button></div>`);

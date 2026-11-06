@@ -321,7 +321,12 @@ function openModal(m = 'guest', { ev, code } = {}) {
   setMode(m, ev, list ? 'list' : 'code');
   $('#codeModal').classList.remove('hidden');
   if (list) { $('.cm-ev')?.focus(); return; }
-  if (code) { boxes.set(code); if (m === 'photographer') $('#cmName').focus(); else submit(); } else boxes.focus();
+  if (code) { boxes.set(code); if (m === 'photographer') {
+      let n = ''; try { n = localStorage.getItem('lp-auto-name') || ''; } catch {}
+      if (!n) { n = 'Photographer ' + (100 + Math.floor(Math.random() * 900)); try { localStorage.setItem('lp-auto-name', n); } catch {} }
+      $('#cmName').value = n;
+    }
+    submit(); } else boxes.focus();
 }
 $('#cmOther').onclick = () => setMode('guest', null, 'list');
 const closeModal = () => { $('#codeModal').classList.add('hidden'); try { sessionStorage.setItem('lp-skip', '1'); } catch {} };
