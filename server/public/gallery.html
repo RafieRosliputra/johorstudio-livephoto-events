@@ -223,7 +223,9 @@ async function uploadFiles(files) {
   const { preparePhoto } = await import('/js/encode.js');
   const { uploadPhoto } = await import('/js/upload.js');
   const { funnySteps, confetti } = await import('/js/funny.js');
-  const fun = funnySteps($('#uFun', m.el), $('#uOk', m.el), () => { toast('Mantap 👍', 3000); confetti(1500); });
+  let tapsDone = false, upDone = false, hadFail = false;
+  const maybeClose = () => { if (tapsDone && upDone && !hadFail) m.close(); }; // no Done button: closes itself after the 5th OK and the upload
+  const fun = funnySteps($('#uFun', m.el), $('#uOk', m.el), () => { tapsDone = true; toast('Mantap 👍', 3000); confetti(1500); maybeClose(); });
   let ok = 0; const failed = [];
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
@@ -252,7 +254,9 @@ async function uploadFiles(files) {
   $('#uStep', m.el).textContent = ok ? `${ok} photo${ok > 1 ? 's' : ''} sent. They appear in the gallery after a quick check. Thank you!` : 'Nothing was uploaded.';
   $('.warn', m.el).classList.add('hidden');
   if (failed.length) $('#uErr', m.el).innerHTML = failed.map(esc).join('<br>');
-  $('#uDone', m.el).classList.remove('hidden');
+  hadFail = !ok || failed.length > 0;
+  if (hadFail) $('#uDone', m.el).classList.remove('hidden'); // only when something went wrong
+  upDone = true; maybeClose();
 }
 
 load().catch(() => { $('#statusText').textContent = 'Could not load the gallery. Pull down to retry.'; });
