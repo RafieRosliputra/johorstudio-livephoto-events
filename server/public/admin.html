@@ -37,6 +37,7 @@
   .code { border: 1px solid var(--mist); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
   .code .lbl { font-size: 12px; letter-spacing: .08em; color: var(--steel); font-weight: 700; text-transform: uppercase; }
   .code .num { font-size: 30px; font-weight: 800; font-stretch: 80%; letter-spacing: .06em; font-variant-numeric: tabular-nums; }
+  .dlink { word-break: break-all; text-align: left; font-size: 13px; }
   .code .acts { display: flex; gap: 10px; font-size: 13px; }
   .inline { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
   .inline .input { padding: 8px 10px; }
@@ -82,7 +83,7 @@
 <body>
 <header class="topbar">
   <div class="wrap">
-    <a class="brand" href="/"><span class="brand-name">JohorStudio.com</span><span class="live-badge">LIVE</span></a>
+    <a class="brand" href="https://johorstudio.com" aria-label="JohorStudio.com"><span class="brand-name">JohorStudio.com</span></a><a class="live-home" href="https://live.johorstudio.com">Live home</a>
     <div class="usermenu"><span id="me"></span><button class="btn small light hidden" id="logoutBtn">Sign out</button></div>
   </div>
 </header>
@@ -197,7 +198,8 @@ function render() {
     <div class="card section">
       <div class="row" style="justify-content:space-between">
         <div style="min-width:0"><div class="small muted">EVENTS / ${esc(e.folder)}</div><h2 class="title">${esc(e.title)}</h2>
-          <div class="small muted">${esc(fmtDate(e.date))}${e.organiser ? ' · ' + esc(e.organiser) : ''}</div></div>
+          <div class="small muted">${esc(fmtDate(e.date))}${e.organiser ? ' · ' + esc(e.organiser) : ''}</div>
+          <button class="linkbtn dlink" data-copy="${esc(location.origin + (PANEL ? '/panel#' : '/admin#') + e.id)}" title="Click to copy">${esc(location.host + (PANEL ? '/panel#' : '/admin#') + e.id)}</button></div>
         <div>${chip(e.status)}</div>
       </div>
       ${req && admin ? `<div class="reqbox"><span><b>Organiser request:</b> ${req.type === 'activate' ? `start the event at ${esc(when(req.startsAt))}` : 'close the event now'}</span>
@@ -332,13 +334,31 @@ function liveControls(e, admin) {
     ${admin ? '<p class="small muted" style="margin:0">Going live makes new guest and photographer codes and signs out devices from earlier sessions. Live for 8 hours unless you change it.</p>' : ''}`;
 }
 
+const ROLE_Q = { public: '', photographer: '?r=p', client: '?r=o' };
+const codeUrl = (key, value) => `https://live.johorstudio.com/c/${value}${ROLE_Q[key] || ''}`;
 function codeCard(label, key, value, admin, help) {
+  const url = codeUrl(key, value);
   return `<div class="code"><span class="lbl">${label}</span><span class="num">${esc(fmtCode(value))}</span>
+    <button class="linkbtn dlink" data-copy="${esc(url)}" title="Click to copy">${esc(url.replace('https://', ''))}</button>
+    <button class="linkbtn" data-qr="${esc(url)}" data-qrlbl="${esc(label)}" data-qrnum="${esc(fmtCode(value))}">Show QR</button>
     <span class="small muted">${help}</span>
     ${admin ? `<span class="acts"><button class="linkbtn" data-rand="${key}">New random</button><button class="linkbtn" data-set="${key}">Set my own</button></span>` : ''}</div>`;
 }
 
+async function showQr(url, label, num) {
+  const { default: qrcode } = await import('/vendor/qrcode/qrcode.mjs');
+  const q = qrcode(0, 'M'); q.addData(url); q.make();
+  const m = modal(`<div style="text-align:center;display:flex;flex-direction:column;align-items:center;gap:10px">
+    <div><span class="brand-name">JohorStudio.com</span> <span class="live-badge">LIVE</span></div>
+    <div class="small muted" style="font-weight:700;letter-spacing:.08em;text-transform:uppercase">${esc(label)} · ${esc(num)}</div>
+    <img alt="QR code" style="width:min(300px,80vw);height:auto;image-rendering:pixelated" src="${q.createDataURL(8, 8)}">
+    <button class="linkbtn dlink" id="qrCopy">${esc(url.replace('https://', ''))}</button>
+    <button class="btn ghost small" data-close>Close</button></div>`);
+  m.el.querySelector('#qrCopy').onclick = () => copyText(url);
+}
 function wire(e, admin) {
+  $$('[data-copy]').forEach((b) => b.onclick = () => copyText(b.dataset.copy));
+  $$('[data-qr]').forEach((b) => b.onclick = () => showQr(b.dataset.qr, b.dataset.qrlbl, b.dataset.qrnum));
   $('#backBtn').onclick = () => { $('#view').classList.remove('detail-open'); };
   $('#copyLink').onclick = () => copyText(e.url);
   qrUntil = e.qrUntil || 0; qrTick();

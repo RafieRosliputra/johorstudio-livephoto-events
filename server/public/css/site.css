@@ -119,3 +119,8 @@ footer.site a { color: var(--mist); }
 .help summary { cursor: pointer; color: var(--teal); }
 .linkbtn { background: none; border: 0; padding: 0; color: var(--teal); cursor: pointer; font: inherit; text-decoration: underline; }
 .error:empty { display: none; }
+
+.topbar .wrap { gap: 12px; }
+.live-home { display: inline-flex; align-items: center; gap: 6px; background: var(--tally); color: #fff; font-size: 12px; font-weight: 700; padding: 6px 12px; border-radius: 6px; letter-spacing: .06em; text-decoration: none; margin-right: auto; }
+.live-home::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #fff; }
+.live-home:hover { filter: brightness(1.1); }

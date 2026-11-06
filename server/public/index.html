@@ -321,7 +321,7 @@ function openModal(m = 'guest', { ev, code } = {}) {
   setMode(m, ev, list ? 'list' : 'code');
   $('#codeModal').classList.remove('hidden');
   if (list) { $('.cm-ev')?.focus(); return; }
-  if (code) { boxes.set(code); if (m === 'guest') submit(); } else boxes.focus();
+  if (code) { boxes.set(code); if (m === 'photographer') $('#cmName').focus(); else submit(); } else boxes.focus();
 }
 $('#cmOther').onclick = () => setMode('guest', null, 'list');
 const closeModal = () => { $('#codeModal').classList.add('hidden'); try { sessionStorage.setItem('lp-skip', '1'); } catch {} };
@@ -354,6 +354,7 @@ async function submit() {
 
 // ---------- events live now ----------
 const qrCode = (location.pathname.match(/^\/c\/(\d{6})/) || [])[1];
+const qrRole = { p: 'photographer', o: 'client' }[new URLSearchParams(location.search).get('r')] || 'guest';
 Promise.all([
   fetch('/api/live-status').then((r) => r.json()).catch(() => ({ live: [] })),
   fetch('/api/me').then((r) => r.json()).catch(() => ({})),
@@ -372,7 +373,7 @@ Promise.all([
   }
   let skipped = false;
   try { skipped = sessionStorage.getItem('lp-skip') === '1'; } catch {}
-  if (qrCode) { history.replaceState(null, '', '/'); openModal('guest', { code: qrCode }); }
+  if (qrCode) { history.replaceState(null, '', '/'); openModal(qrRole, { code: qrCode }); }
   else if (live.length && !skipped) openModal('guest');
 });
 
