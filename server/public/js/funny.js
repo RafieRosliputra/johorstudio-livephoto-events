@@ -1,5 +1,5 @@
 // Funny progress lines shown while a guest photo uploads. 30 sets of 5 lines; a random set per upload.
-// Timing per line: 1 s, 2 s, 2 s, 1 s, 1 s. If the upload is still running when a set ends, the next set starts.
+// Timing per line: 2 s, 4 s, 4 s, 2 s, 2 s. If the upload is still running when a set ends, the next set starts.
 const SETS = [
 ['Uploading your cute photo, kawai 🥰', 'Removing nasi lemak from your lips…', 'AI says your face looks like an international celebrity 😎', "Fun fact: nasi lemak is called Malaysia's national dish", 'Mamak, teh one siappp ☕'],
 ['Sending your photo to the cloud, harap-harap sampai', 'Asking mamak to wait, roti canai still flipping', 'AI is checking: your smile is 98% handsome / beautiful', 'Fun fact: many mamak stalls in Malaysia open 24 hours', 'Teh tarik pulled, upload hampir siap!'],
@@ -32,7 +32,7 @@ const SETS = [
 ['Uploading your photo, handsome habis', 'Removing the creases from your baju Melayu…', 'AI says you look like a groom 🤵', 'Fun fact: songkok is a traditional hat worn by Malay men', 'Siap bergosok, upload siap!'],
 ['Uploading your photo, thank you for waiting', 'Removing a tiny bug from the server…', 'AI says you are the best guest at this event 🏆', "Fun fact: Malaysia is one of the biggest rubber glove makers in the world", 'Jom, tengok photo kau!'],
 ];
-const MS = [1000, 2000, 2000, 1000, 1000];
+const MS = [2000, 4000, 4000, 2000, 2000]; // 14 s per set
 
 /** Shows the funny lines in `el`, one after another, until stop() is called. */
 export function funnyProgress(el) {
