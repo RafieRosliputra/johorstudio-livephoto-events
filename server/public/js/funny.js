@@ -34,21 +34,26 @@ const SETS = [
 ];
 const MS = [2000, 4000, 4000, 2000, 2000]; // 14 s per set
 
-/** Shows the funny lines in `el`, one after another, until stop() is called. */
+/** Shows the funny lines in `el`, one after another. finish() resolves once the first set has played completely
+ *  (so a fast upload never cuts it off); if the upload was slow, later sets are cut off immediately. */
 export function funnyProgress(el) {
-  let timer = 0, last = -1, stopped = false;
+  let timer = 0, last = -1, stopped = false, sets = 0, firstDone;
+  const first = new Promise((r) => { firstDone = r; });
   const run = () => {
     let k; do { k = Math.floor(Math.random() * SETS.length); } while (k === last && SETS.length > 1);
-    last = k;
+    last = k; sets++;
     let i = 0;
     const step = () => {
       if (stopped) return;
       el.textContent = SETS[k][i];
       const wait = MS[i]; i++;
-      timer = setTimeout(i < 5 ? step : run, wait);
+      timer = setTimeout(() => { if (i < 5) step(); else { firstDone(); run(); } }, wait);
     };
     step();
   };
   run();
-  return { stop() { stopped = true; clearTimeout(timer); el.textContent = ''; } };
+  return {
+    async finish() { if (sets === 1) await first; stopped = true; clearTimeout(timer); el.textContent = ''; },
+    stop() { stopped = true; clearTimeout(timer); el.textContent = ''; firstDone(); },
+  };
 }
