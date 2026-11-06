@@ -215,11 +215,14 @@ async function uploadFiles(files) {
     <div class="warn">Please don't close this page or lock your phone until it's done.</div>
     <div class="ufile"><span id="uName"></span><span id="uCount"></span></div>
     <div class="progress"><div id="uBar"></div></div>
+    <div id="uFun" style="font-weight:600;min-height:2.6em;margin-top:10px" aria-live="off"></div>
     <div class="small muted" id="uStep">Preparing…</div>
     <div class="error" id="uErr"></div>
     <button class="btn hidden" id="uDone" data-close>Done</button>`);
   const { preparePhoto } = await import('/js/encode.js');
   const { uploadPhoto } = await import('/js/upload.js');
+  const { funnyProgress } = await import('/js/funny.js');
+  const fun = funnyProgress($('#uFun', m.el));
   let ok = 0; const failed = [];
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
@@ -241,6 +244,7 @@ async function uploadFiles(files) {
       if ([401, 403, 428, 429].includes(err.status)) break;
     }
   }
+  fun.stop();
   busy = false;
   refreshGuest();
   $('#uBar', m.el).style.width = '100%';

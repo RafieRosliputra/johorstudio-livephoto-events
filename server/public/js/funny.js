@@ -1,0 +1,54 @@
+// Funny progress lines shown while a guest photo uploads. 30 sets of 5 lines; a random set per upload.
+// Timing per line: 1 s, 2 s, 2 s, 1 s, 1 s. If the upload is still running when a set ends, the next set starts.
+const SETS = [
+['Uploading your cute photo, kawai 🥰', 'Removing nasi lemak from your lips…', 'AI says your face looks like an international celebrity 😎', "Fun fact: nasi lemak is called Malaysia's national dish", 'Mamak, teh one siappp ☕'],
+['Sending your photo to the cloud, harap-harap sampai', 'Asking mamak to wait, roti canai still flipping', 'AI is checking: your smile is 98% handsome / beautiful', 'Fun fact: many mamak stalls in Malaysia open 24 hours', 'Teh tarik pulled, upload hampir siap!'],
+['Uploading your photo, the cat is also watching 🐱', 'Removing cat hair from the lens…', 'AI detected: this face has main character energy', 'Fun fact: Kuala Lumpur means "muddy confluence"', 'Meow! Almost done!'],
+['Uploading your photo, wangi tak?', 'Removing durian smell from your phone…', 'AI says you look like a durian: tough outside, sweet inside 😆', 'Fun fact: durian is called the "king of fruits"', 'Buka durian, siap!'],
+['Uploading your photo, kilat sambar sikit', 'Drying your photo, tadi kena hujan', 'AI detected: face looks fresh after the rain', 'Fun fact: Malaysia is hot and rainy almost all year', 'Payung ready, upload siap!'],
+['Uploading your photo, pose lawa tu', 'Removing the stranger who photobombed…', 'AI says: this photo deserves a frame 🖼️', 'Fun fact: the Petronas Twin Towers were the tallest buildings in the world from 1998 to 2004', 'Tahniah, you are photogenic!'],
+['Uploading your photo, gula kurang manis', 'Pulling your upload like teh tarik…', 'AI says your face looks like a barista champion', 'Fun fact: teh tarik means "pulled tea"', 'Tarik… tarik… siap!'],
+['Uploading your photo, jemput makan', 'Removing rendang sauce from your baju…', 'AI says you are the VIP at this kenduri 🎉', 'Fun fact: Malaysians love open house during Hari Raya', 'Tambah nasi, upload siap!'],
+['Uploading your photo, gaya terbaik', 'Removing the extra peace sign (just one is enough)…', 'AI says: model material detected 📸', 'Fun fact: Rafflesia from Borneo is one of the biggest flowers in the world', 'Catwalk dulu, then done!'],
+['Uploading your photo, jangan bagi monyet curi', 'Removing a monkey from your photo…', 'AI says the monkey is more photogenic than the photographer 🐒', 'Fun fact: orang utan means "person of the forest" in Malay', 'Monyet dah balik, upload siap!'],
+['Uploading your photo, sejuk sejuk', 'Removing gula Melaka from your phone…', 'AI says your face looks like a cendol: cute and colourful', 'Fun fact: cendol is a favourite dessert in Malaysia', 'Ais cendol one! Siap!'],
+['Uploading your memory, sentap sikit', 'Removing the old ex from the background…', 'AI says this memory is already 100% cute 🥹', 'Fun fact: Mount Kinabalu in Sabah is about 4,095 metres tall', 'Memory saved, move on!'],
+['Uploading your photo, bakar perlahan-lahan', 'Removing kuah kacang from your cheek…', 'AI says you look like a satay lover 🍢', 'Fun fact: satay is very popular at Malaysian night markets', 'Satay dah masak, upload siap!'],
+['Uploading your photo, roar!', 'Removing lion mane from your hair…', 'AI says you look like a brave lion 🦁', 'Fun fact: Sarawak is called the "Land of the Hornbills"', 'Raung dulu, then done!'],
+['Uploading your graduation photo, tahniah!', 'Removing the topi from your eyes…', 'AI says you look smarter already 🎓', 'Fun fact: George Town in Penang is a UNESCO World Heritage Site', 'Dah grad, upload pun siap!'],
+['Uploading your photo, sabar ye', 'Asking Wi-Fi to try harder…', 'AI says this Wi-Fi needs more nasi lemak 😅', 'Fun fact: Malaysians love saying "lah" at the end of sentences', 'Wi-Fi okay, upload siap!'],
+['Uploading your cute baby photo, comel!', 'Removing the pipi cubit marks…', 'AI says this baby is a star ⭐', 'Fun fact: the wau bulan (moon kite) comes from Kelantan', 'Baby happy, upload siap!'],
+['Uploading your beach photo, bawa pasir sekali', 'Removing sand from the lens…', 'AI says you look like a holiday ad 🏖️', 'Fun fact: Malaysia has two parts, Peninsular and Borneo, separated by the South China Sea', 'Ombak tenang, upload siap!'],
+['Uploading your photo, dalam proses', 'Folding your photo like roti canai…', 'AI says your face looks like crispy roti canai 🫓', "Fun fact: roti canai is one of Malaysia's favourite breakfasts", 'Dal ready, upload siap!'],
+['Uploading your photo… eh, ada orang belakang?', 'Removing a mysterious white figure…', 'AI says: just pocong, harmless 👻', 'Fun fact: Taman Negara is believed to be one of the oldest rainforests in the world', 'Hantu dah lari, upload siap!'],
+['Uploading your photo, pedas sikit', 'Removing sambal from the screen…', 'AI says your smile is spicy 🌶️', 'Fun fact: Malaysians love sambal with almost everything', 'Air sejuk ready, upload siap!'],
+['Uploading your photo, Johor boleh!', 'Removing traffic from the Johor causeway…', 'AI says you look like a Johor Bahru superstar ⭐', 'Fun fact: Johor is famous for laksa Johor and mee rebus', 'Sampai! Upload siap!'],
+['Uploading your photo, wangi bunga', 'Removing the bee from your flower pose…', 'AI says: you are blooming 🌸', "Fun fact: bunga raya (hibiscus) is Malaysia's national flower", 'Bunga mekar, upload siap!'],
+['Uploading your photo, kopi O kosong', 'Removing coffee stains from your picture…', 'AI says you look like a morning person ☕', 'Fun fact: Malaysians enjoy kopitiam breakfast with kaya toast', 'Kopi dah sejuk, upload siap!'],
+['Uploading your photo, murah murah!', "Removing the penjual's shout from the background…", 'AI says you look like the best bargain of the night 🛍️', 'Fun fact: pasar malam is a night market that moves to different places each day', 'Sold out, upload siap!'],
+['Uploading your photo, baju raya baru ni', 'Removing duit raya from your pocket (mak nak simpan)…', 'AI says you are the best dressed at the open house 🧕', 'Fun fact: Malaysia celebrates Hari Raya, Chinese New Year and Deepavali', 'Selamat Hari Raya, upload siap!'],
+['Uploading your photo, cape ready', 'Removing the kryptonite…', 'AI says you look like a superhero 💥', "Fun fact: Malaysia is one of the world's megadiverse countries", 'Superhero dah sampai, upload siap!'],
+['Uploading your photo, snorkel dulu', 'Removing a fish from your photo…', 'AI says you look like a happy mermaid 🧜', 'Fun fact: Sipadan in Sabah is famous among scuba divers', 'Fishy business done, upload siap!'],
+['Uploading your photo, handsome habis', 'Removing the creases from your baju Melayu…', 'AI says you look like a groom 🤵', 'Fun fact: songkok is a traditional hat worn by Malay men', 'Siap bergosok, upload siap!'],
+['Uploading your photo, thank you for waiting', 'Removing a tiny bug from the server…', 'AI says you are the best guest at this event 🏆', "Fun fact: Malaysia is one of the biggest rubber glove makers in the world", 'Jom, tengok photo kau!'],
+];
+const MS = [1000, 2000, 2000, 1000, 1000];
+
+/** Shows the funny lines in `el`, one after another, until stop() is called. */
+export function funnyProgress(el) {
+  let timer = 0, last = -1, stopped = false;
+  const run = () => {
+    let k; do { k = Math.floor(Math.random() * SETS.length); } while (k === last && SETS.length > 1);
+    last = k;
+    let i = 0;
+    const step = () => {
+      if (stopped) return;
+      el.textContent = SETS[k][i];
+      const wait = MS[i]; i++;
+      timer = setTimeout(i < 5 ? step : run, wait);
+    };
+    step();
+  };
+  run();
+  return { stop() { stopped = true; clearTimeout(timer); el.textContent = ''; } };
+}
