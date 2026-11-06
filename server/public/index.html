@@ -306,7 +306,7 @@ function setMode(m, ev, view = 'code') {
   $('#cmOther').classList.toggle('hidden', !(m === 'guest' && view === 'code' && live.length > 1));
   $('#cmGo').textContent = t.go;
   $('#cmHelp').textContent = t.help;
-  $('#cmNameField').classList.toggle('hidden', m !== 'photographer');
+  $('#cmNameField').classList.toggle('hidden', m === 'guest');
   $('#cmPhotog').classList.toggle('hidden', m !== 'guest');
   $('#cmGuest').classList.toggle('hidden', m === 'guest');
   $('#cmErr').textContent = '';
@@ -321,12 +321,8 @@ function openModal(m = 'guest', { ev, code } = {}) {
   setMode(m, ev, list ? 'list' : 'code');
   $('#codeModal').classList.remove('hidden');
   if (list) { $('.cm-ev')?.focus(); return; }
-  if (code) { boxes.set(code); if (m === 'photographer') {
-      let n = ''; try { n = localStorage.getItem('lp-auto-name') || ''; } catch {}
-      if (!n) { n = 'Photographer ' + (100 + Math.floor(Math.random() * 900)); try { localStorage.setItem('lp-auto-name', n); } catch {} }
-      $('#cmName').value = n;
-    }
-    submit(); } else boxes.focus();
+  if (code) { boxes.set(code); if (m === 'guest') submit();
+    else { try { $('#cmName').value = localStorage.getItem('lp-staff-name') || ''; } catch {} $('#cmName').focus(); } } else boxes.focus();
 }
 $('#cmOther').onclick = () => setMode('guest', null, 'list');
 const closeModal = () => { $('#codeModal').classList.add('hidden'); try { sessionStorage.setItem('lp-skip', '1'); } catch {} };
@@ -345,9 +341,10 @@ async function submit() {
   const code = boxes.get();
   if (code.length !== 6) { $('#cmErr').textContent = 'Enter the 6-digit code.'; boxes.focus(); return; }
   const name = $('#cmName').value.trim();
-  if (mode === 'photographer' && !name) { $('#cmErr').textContent = 'Type your name.'; $('#cmName').focus(); return; }
+  if (mode !== 'guest' && !name) { $('#cmErr').textContent = 'Type your name.'; $('#cmName').focus(); return; }
   busy = true; $('#cmGo').disabled = true;
   try {
+    if (mode !== 'guest') { try { localStorage.setItem('lp-staff-name', name); } catch {} }
     const r = await sendCode(code, { want: mode, name });
     location.href = r.next;
   } catch (e) {
