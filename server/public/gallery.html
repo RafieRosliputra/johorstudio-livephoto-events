@@ -223,6 +223,7 @@ async function uploadFiles(files) {
   const { uploadPhoto } = await import('/js/upload.js');
   const { funnyProgress } = await import('/js/funny.js');
   const fun = funnyProgress($('#uFun', m.el));
+  const t0 = Date.now();
   let ok = 0; const failed = [];
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
@@ -244,6 +245,9 @@ async function uploadFiles(files) {
       if ([401, 403, 428, 429].includes(err.status)) break;
     }
   }
+  // fast uploads: let one full set of funny lines play so people can read it
+  const left = 7000 - (Date.now() - t0);
+  if (ok && left > 0) { $('#uStep', m.el).textContent = 'Almost there…'; await new Promise((r) => setTimeout(r, left)); }
   fun.stop();
   busy = false;
   refreshGuest();
