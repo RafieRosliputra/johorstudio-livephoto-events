@@ -1,5 +1,4 @@
-// Funny progress lines shown while a guest photo uploads. 30 sets of 5 lines; a random set per upload, played once; the last line stays until the upload is done.
-// Timing per line: 1 s, 2.5 s, 2.5 s, 1 s, 1 s (8 s). The last line stays on screen until the upload is done.
+// Funny progress lines shown while a guest photo uploads. 30 sets of 5 lines; one random set per upload; the guest taps OK to move to the next line.
 const SETS = [
 ['Uploading your cute photo, kawai 🥰', 'Removing nasi lemak from your lips…', 'AI says your face looks like an international celebrity 😎', "Fun fact: nasi lemak is called Malaysia's national dish", 'Mamak, teh one siappp ☕'],
 ['Sending your photo to the cloud, harap-harap sampai', 'Asking mamak to wait, roti canai still flipping', 'AI is checking: your smile is 98% handsome / beautiful', 'Fun fact: many mamak stalls in Malaysia open 24 hours', 'Teh tarik pulled, upload hampir siap!'],
@@ -32,23 +31,43 @@ const SETS = [
 ['Uploading your photo, handsome habis', 'Removing the creases from your baju Melayu…', 'AI says you look like a groom 🤵', 'Fun fact: songkok is a traditional hat worn by Malay men', 'Siap bergosok, upload siap!'],
 ['Uploading your photo, thank you for waiting', 'Removing a tiny bug from the server…', 'AI says you are the best guest at this event 🏆', "Fun fact: Malaysia is one of the biggest rubber glove makers in the world", 'Jom, tengok photo kau!'],
 ];
-const MS = [1000, 2500, 2500, 1000, 1000]; // 8 s per set
 
-/** Plays one random set in `el` (never a second one). finish() waits until the set has played completely,
- *  so a fast upload never cuts it off; stop() clears it at once. */
-export function funnyProgress(el) {
-  const k = Math.floor(Math.random() * SETS.length);
-  let timer = 0, i = 0, stopped = false, done;
-  const played = new Promise((r) => { done = r; });
-  const step = () => {
-    if (stopped) return;
-    el.textContent = SETS[k][i];
-    const wait = MS[i]; i++;
-    if (i < 5) timer = setTimeout(step, wait); else timer = setTimeout(done, wait);
+/** Confetti burst for ~1.5 s (skipped for people who asked for less motion). */
+export function confetti(ms = 1500) {
+  try { if (matchMedia('(prefers-reduced-motion: reduce)').matches) return; } catch {}
+  const box = document.createElement('div');
+  box.setAttribute('aria-hidden', 'true');
+  box.style.cssText = 'position:fixed;inset:0;pointer-events:none;overflow:hidden;z-index:200';
+  const colors = ['#e8453c', '#f6b73c', '#2e9d6a', '#2f8fd6', '#a45ee0', '#ff7ab6'];
+  for (let n = 0; n < 60; n++) {
+    const p = document.createElement('i');
+    const size = 6 + Math.random() * 6;
+    p.style.cssText = `position:absolute;left:50%;top:55%;width:${size}px;height:${size * 1.6}px;background:${colors[n % colors.length]};border-radius:2px`;
+    box.appendChild(p);
+    const ang = (Math.random() * 2 - 1) * Math.PI * 0.9 - Math.PI / 2, dist = 120 + Math.random() * 260;
+    const dx = Math.cos(ang) * dist, dy = Math.sin(ang) * dist;
+    p.animate([
+      { transform: 'translate(-50%,-50%) rotate(0)', opacity: 1 },
+      { transform: `translate(${dx}px,${dy}px) rotate(${Math.random() * 720 - 360}deg)`, opacity: 1, offset: 0.55 },
+      { transform: `translate(${dx * 1.15}px,${dy + 220}px) rotate(${Math.random() * 900 - 450}deg)`, opacity: 0 },
+    ], { duration: ms, easing: 'cubic-bezier(.2,.7,.4,1)', fill: 'forwards' });
+  }
+  document.body.appendChild(box);
+  setTimeout(() => box.remove(), ms + 100);
+}
+
+/** Shows one random set in `line`, one line per tap on `btn` (OK). After the 5th tap, onAll() runs and the button hides. */
+export function funnySteps(line, btn, onAll) {
+  const set = SETS[Math.floor(Math.random() * SETS.length)];
+  let i = 0;
+  const show = () => { line.textContent = set[i]; btn.textContent = 'OK'; };
+  btn.onclick = () => {
+    i++;
+    if (i < 5) { show(); return; }
+    line.textContent = ''; btn.classList.add('hidden'); btn.onclick = null;
+    onAll();
   };
-  step();
-  return {
-    async finish() { await played; stopped = true; el.textContent = ''; },
-    stop() { stopped = true; clearTimeout(timer); el.textContent = ''; done(); },
-  };
+  btn.classList.remove('hidden');
+  show();
+  return { stop() { line.textContent = ''; btn.classList.add('hidden'); btn.onclick = null; } };
 }
