@@ -1,5 +1,5 @@
-// Funny progress lines shown while a guest photo uploads. 30 sets of 5 lines; a random set per upload.
-// Timing per line: 2 s, 4 s, 4 s, 2 s, 2 s. If the upload is still running when a set ends, the next set starts.
+// Funny progress lines shown while a guest photo uploads. 30 sets of 5 lines; a random set per upload, played once; the last line stays until the upload is done.
+// Timing per line: 1 s, 2.5 s, 2.5 s, 1 s, 1 s (8 s). The last line stays on screen until the upload is done.
 const SETS = [
 ['Uploading your cute photo, kawai 🥰', 'Removing nasi lemak from your lips…', 'AI says your face looks like an international celebrity 😎', "Fun fact: nasi lemak is called Malaysia's national dish", 'Mamak, teh one siappp ☕'],
 ['Sending your photo to the cloud, harap-harap sampai', 'Asking mamak to wait, roti canai still flipping', 'AI is checking: your smile is 98% handsome / beautiful', 'Fun fact: many mamak stalls in Malaysia open 24 hours', 'Teh tarik pulled, upload hampir siap!'],
@@ -32,28 +32,23 @@ const SETS = [
 ['Uploading your photo, handsome habis', 'Removing the creases from your baju Melayu…', 'AI says you look like a groom 🤵', 'Fun fact: songkok is a traditional hat worn by Malay men', 'Siap bergosok, upload siap!'],
 ['Uploading your photo, thank you for waiting', 'Removing a tiny bug from the server…', 'AI says you are the best guest at this event 🏆', "Fun fact: Malaysia is one of the biggest rubber glove makers in the world", 'Jom, tengok photo kau!'],
 ];
-const MS = [2000, 4000, 4000, 2000, 2000]; // 14 s per set
+const MS = [1000, 2500, 2500, 1000, 1000]; // 8 s per set
 
-/** Shows the funny lines in `el`, one after another. finish() resolves once the first set has played completely
- *  (so a fast upload never cuts it off); if the upload was slow, later sets are cut off immediately. */
+/** Plays one random set in `el` (never a second one). finish() waits until the set has played completely,
+ *  so a fast upload never cuts it off; stop() clears it at once. */
 export function funnyProgress(el) {
-  let timer = 0, last = -1, stopped = false, sets = 0, firstDone;
-  const first = new Promise((r) => { firstDone = r; });
-  const run = () => {
-    let k; do { k = Math.floor(Math.random() * SETS.length); } while (k === last && SETS.length > 1);
-    last = k; sets++;
-    let i = 0;
-    const step = () => {
-      if (stopped) return;
-      el.textContent = SETS[k][i];
-      const wait = MS[i]; i++;
-      timer = setTimeout(() => { if (i < 5) step(); else { firstDone(); run(); } }, wait);
-    };
-    step();
+  const k = Math.floor(Math.random() * SETS.length);
+  let timer = 0, i = 0, stopped = false, done;
+  const played = new Promise((r) => { done = r; });
+  const step = () => {
+    if (stopped) return;
+    el.textContent = SETS[k][i];
+    const wait = MS[i]; i++;
+    if (i < 5) timer = setTimeout(step, wait); else timer = setTimeout(done, wait);
   };
-  run();
+  step();
   return {
-    async finish() { if (sets === 1) await first; stopped = true; clearTimeout(timer); el.textContent = ''; },
-    stop() { stopped = true; clearTimeout(timer); el.textContent = ''; firstDone(); },
+    async finish() { await played; stopped = true; el.textContent = ''; },
+    stop() { stopped = true; clearTimeout(timer); el.textContent = ''; done(); },
   };
 }
