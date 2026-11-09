@@ -18,3 +18,8 @@ git clone https://github.com/RafieRosliputra/johorstudio-livephoto-events && cd 
 ./deploy/update.sh           # kemas kini kod sahaja
 ```
 Admin: https://live.johorstudio.com/admin (Cloudflare Access). Organiser: /panel (kod organiser). Photographer: /shoot atau app.
+
+
+## Linked repo: JS Tether app
+
+The Android app **[a7rii-android-push](https://github.com/RafieRosliputra/a7rii-android-push)** (branch `v4`) uses these routes: `/auth/code`, `/api/shoot` (+ `guestUrl`, `guestCode`), `/api/shoot/uploads`, `/api/uploads/*`, `/api/shoot/check`, `/api/shoot/photos*` (own photos list / thumbnail / delete), `/api/shoot/app` and `/api/shoot/app.apk` (in-app update; version is read from the APK file name `JSTether-vX.Y.Z.apk`). `/join/<code>` opens the app; `public/.well-known/assetlinks.json` must match the app's signing key (release.keystore SHA-256). Change one side, check the other.
