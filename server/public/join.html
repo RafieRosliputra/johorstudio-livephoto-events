@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#20272b">
+<title>Join as photographer · JohorStudio.com Live</title>
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="/css/site.css">
+<style>
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+  .box { width: 100%; max-width: 440px; margin: 32px auto; padding: 24px; display: flex; flex-direction: column; gap: 14px; }
+  .box h1 { margin: 0; font-size: 24px; font-stretch: 85%; }
+</style>
+</head>
+<body>
+<main class="box">
+  <h1>Photographer sign-in</h1>
+  <p class="muted" id="msg">Opening the JS Tether app…</p>
+  <a class="btn" id="open" href="#">Open in JS Tether app</a>
+  <a class="btn ghost" id="web" href="#">Continue on the web instead</a>
+  <p class="small muted">App not installed? Continue on the web, sign in, and download JS Tether from the photographer page.</p>
+</main>
+<script>
+const code = (location.pathname.match(/\/join\/(\d{6})/) || [])[1] || '';
+const web = `/c/${code}?r=p`;
+document.getElementById('web').href = web;
+const deep = `jstether://login?code=${code}`;
+const intentUrl = `intent://login?code=${code}#Intent;scheme=jstether;package=com.johorstudio.tether;S.browser_fallback_url=${encodeURIComponent(location.origin + web)};end`;
+const android = /Android/i.test(navigator.userAgent);
+document.getElementById('open').href = android ? intentUrl : deep;
+if (!code) document.getElementById('msg').textContent = 'This link is not valid.';
+else if (android) setTimeout(() => { location.href = intentUrl; }, 300);
+else document.getElementById('msg').textContent = 'Open this link on the photographer’s Android phone, or continue on the web.';
+</script>
+</body>
+</html>

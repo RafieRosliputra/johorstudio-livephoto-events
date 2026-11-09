@@ -373,7 +373,7 @@ function liveControls(e, admin) {
 }
 
 const ROLE_Q = { public: '', photographer: '?r=p', client: '?r=o' };
-const codeUrl = (key, value) => `https://live.johorstudio.com/c/${value}${ROLE_Q[key] || ''}`;
+const codeUrl = (key, value) => (key === 'photographer' ? `https://live.johorstudio.com/join/${value}` : `https://live.johorstudio.com/c/${value}${ROLE_Q[key] || ''}`);
 function codeCard(label, key, value, admin, help) {
   const url = codeUrl(key, value);
   return `<div class="code"><span class="lbl">${label}</span><span class="num">${esc(fmtCode(value))}</span>

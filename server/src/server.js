@@ -21,6 +21,7 @@ const TYPES = {
 const PAGES = [
   [/^\/$/, 'index.html'],
   [/^\/c\/\d{6}\/?$/, 'index.html'],        // QR on the big screen: code filled in
+  [/^\/join\/\d{6}\/?$/, 'join.html'],      // photographer link: opens the JS Tether app with the code
   [/^\/admin\/?$/, 'admin.html'],
   [/^\/panel\/?$/, 'admin.html'],              // organiser panel (client code), same page, fewer powers
   [/^\/shoot\/?$/, 'shoot.html'],
