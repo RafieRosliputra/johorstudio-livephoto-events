@@ -258,7 +258,29 @@ r('GET', '/s/:photo/:size', (req, res, { params }) => {
 // ---------------- photographer ----------------
 r('GET', '/api/shoot', (req, res) => {
   const { session, event } = auth.requireSession(req, 'photographer');
-  sendJson(res, 200, { event: { ...publicEventJson(event), id: event.id }, name: session.name, slot: session.slot, folder: storage.sourceFolder('photographer', session.slot) });
+  sendJson(res, 200, { event: { ...publicEventJson(event), id: event.id }, name: session.name, slot: session.slot, folder: storage.sourceFolder('photographer', session.slot), guestUrl: codeUrl(event.public_code), guestCode: event.public_code });
+});
+// Photographer's own photos (Photographer N folder): list, thumbnail, delete.
+r('GET', '/api/shoot/photos', (req, res, { query }) => {
+  const { session, event } = auth.requireSession(req, 'photographer');
+  const before = query.get('before');
+  const list = db.slotPhotos(event.id, session.slot, { before: before ? Number(before) : null, limit: query.get('limit') });
+  sendJson(res, 200, { photos: list.map(photoJson) });
+});
+function ownPhoto(req, id) {
+  const { session, event } = auth.requireSession(req, 'photographer');
+  const p = db.getPhoto(id);
+  if (!p || p.event_id !== event.id || p.source !== 'photographer' || p.slot !== session.slot) fail(404, 'Photo not found');
+  return { ev: event, p };
+}
+r('GET', '/api/shoot/photos/:id/:size', (req, res, { params }) => {
+  const { ev, p } = ownPhoto(req, params.id);
+  serveImage(req, res, ev, p, params.size, false, 'private, max-age=3600');
+});
+r('DELETE', '/api/shoot/photos/:id', (req, res, { params }) => {
+  const { ev, p } = ownPhoto(req, params.id);
+  storage.deletePhoto(ev, p);
+  sendJson(res, 200, { ok: true });
 });
 
 // ---------------- chunked uploads ----------------

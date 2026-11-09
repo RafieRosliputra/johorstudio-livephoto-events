@@ -1,0 +1,11 @@
+{
+ "ts": "20261109-154618",
+ "written": [
+  "server/public/admin.html",
+  "server/src/api.js",
+  "server/src/apk.js",
+  "server/test/api.test.js"
+ ],
+ "test_rc": 0,
+ "test_tail": "> livephoto-server@3.0.0 test\n> node --test test/*.test.js\n\n\u2714 admin API needs a valid Cloudflare Access login (28.295584ms)\n\u2714 admin creates an event with three different codes; not live yet (6.772042ms)\n\u2714 activate: new codes, live status, wrong-code limit with tries left (9.0665ms)\n\u2714 guest: code -> gallery, must accept notice, upload goes to AI, limit 3 (644.327375ms)\n\u2714 photographer: code + name -> Photographer N, upload is approved without AI (184.972375ms)\n[apk] JSTether-v4.0.apk (jstether-v4.0) saved\n\u2714 APK download only after login (photographer / admin) (6.931125ms)\n[apk] direct.apk saved\n[apk] JSTether-v4.0.apk (jstether-v4.0) saved\n[apk] uploaded MyUpload.apk\n[apk] JSTether-v4.0.apk (jstether-v4.0) saved\n\u2714 admin APK source: SSRF guard, custom URL, upload, reset default (19.365833ms)\n\u2714 organiser panel: review queue, allow / remove, request to close (9.901625ms)\n\u2714 admin / organiser upload with a nickname, no AI check; big screen on / off (24.06125ms)\n\u2714 settings, extend, close: guests and photographers logged out, guest code changes, gallery stays (12.718459ms)\n\u2714 download-all link: made at close, two ZIPs, 7 days, admin adds 7 more (14.530959ms)\n\u2714 scanner adopts SMB folders with their codes (3.189333ms)\n\u2714 pages are served (8.245291ms)\n\u2139 tests 13\n\u2139 suites 0\n\u2139 pass 13\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 1084.938333"
+}

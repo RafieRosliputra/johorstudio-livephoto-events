@@ -334,6 +334,13 @@ export function galleryPhotos(eventId, { before, after, limit = 120, staff = fal
   args.push(limit);
   return q(`SELECT * FROM photos WHERE ${where.join(' AND ')} ORDER BY seq DESC LIMIT ?`).all(...args);
 }
+export function slotPhotos(eventId, slot, { before, limit = 60 } = {}) {
+  const args = [eventId, slot];
+  let w = "event_id=? AND source='photographer' AND slot=?";
+  if (before != null) { w += ' AND seq<?'; args.push(before); }
+  args.push(Math.min(Number(limit) || 60, 200));
+  return q(`SELECT * FROM photos WHERE ${w} ORDER BY seq DESC LIMIT ?`).all(...args);
+}
 export const randomPhotos = (eventId, n) =>
   q("SELECT * FROM photos WHERE event_id=? AND hidden=0 AND status='approved' AND width>0 ORDER BY RANDOM() LIMIT ?").all(eventId, n);
 

@@ -1,0 +1,1501 @@
+$ dsh --profile headless --patch /Users/johorstudio/Desktop/ai/claude/projects/ds-worker/patches/pro.yml --add-dir /Users/johorstudio/Desktop/ai/claude/projects/johorstudio-livephoto-events -
+rc=0 475s
+
+--- STDOUT ---
+BM · DeepSeek · user Rafi.
+
+DONE · `cd server && npm test` → 13/13 pass.
+
+- `apk.js`: source modes in `dataDir/app/apk-source.json` {mode,url,updatedAt} (`default|url|upload`); exports `setSource/getSource/saveUploadedApk/releasesApiUrl`; `refreshApk` reads source, `upload` never overwritten, meta gets `source`; PK/size validation + atomic write + old-file cleanup kept.
+- `api.js`: `GET /app` → {apk,source}; `PUT /app/source` (https-only + SSRF guard: localhost/.local/private IPv4+IPv6) then refresh; `POST /app/upload` (readBody 100MB, `x-filename` must end `.apk` + PK magic, sets mode=upload); `/app/refresh` kept. Photographer routes untouched.
+- `admin.html`: apk card adds source line, URL input + "Pautkan", "Reset default", "Upload APK" (toast). English UI, no new libs.
+- `test/api.test.js`: SSRF rejections, direct .apk + releases-API custom URL, repo-URL conversion, upload reject/ok/survive-refresh, reset default; admin-only 401 verified.
+
+NOTES:
+- direct `.apk` URL = "download once" (cached via `direct:<url>` id; re-PUT to re-fetch).
+- custom URL stored verbatim; repo→releases-API conversion at refresh time.
+- `.ds-worker/` untracked (harness dir), not touched; only the 4 allowed files changed.
+
+
+--- STDERR ---
+[llm-deepseek-api-key] model listing from https://api.deepseek.com/models loaded 2 model(s), skipped 0 row(s)
+dsh: reasoning:
+Let me start by reading the boot file as instructed, then the context files.
+dsh: reasoning:
+Let me output the boot proof line. mode = FS (ROOT readable). agent = deepseek.
+dsh: reasoning:
+Let me read the rest of admin.html (lines 676+) and check server.js / auth.js to understand `requireAdmin` and how `apk.js` is imported. Also need to see `server.js` to understand how the app is wired, and `auth.js` for `requireAdmin`.
+
+Let me read the remaining admin.html and check auth.js and server.js.
+dsh: reasoning:
+Now I understand the structure. Let me plan the implementation.
+
+I need to modify:
+1. `server/src/apk.js` — add source modes persisted in `dataDir/app/apk-source.json` {mode,url,updatedAt}, `setSource(obj)`, `getSource()`, `saveUploadedApk(buf, filename)`, meta gets `source` field.
+2. `server/src/api.js` — admin routes: GET /app returns {apk, source}; PUT /app/source; POST /app/upload; keep /app/refresh.
+3. `server/public/admin.html` — apk card section with source line, URL input + "Pautkan" button, "Reset default" button, file input "Upload APK".
+4. `server/test/api.test.js` — extend tests.
+
+Let me think carefully about the design.
+
+### apk.js redesign
+
+Current `refreshApk()`:
+- if `!config.apkReleasesUrl || busy` return apkInfo()
+- fetch releases, pick first non-draft release with .apk asset, download, validate, write atomic, cleanup old, write meta.
+
+New requirements:
+- source modes persisted in `dataDir/app/apk-source.json` {mode, url, updatedAt}
+  - a) default = env/config.apkReleasesUrl (unchanged behaviour)
+  - b) custom URL: GitHub releases API URL (existing logic), GitHub repo URL `https://github.com/<o>/<r>` (convert to api releases url), or direct https URL ending `.apk` (download once; validate PK zip magic)
+  - c) manual upload: admin uploads .apk; saved as active file; auto-sync must NOT overwrite while mode=upload.
+- `refreshApk` reads source file.
+- keep existing validation (PK magic, size>1000), atomic write, old file cleanup, apk.json meta.
+- add exported `setSource(obj)`, `getSource()`, `saveUploadedApk(buf, filename)`.
+- meta gets `source` field (default|url|upload).
+
+Let me design:
+
+```js
+const sourceFile = () => path.join(dir(), 'apk-source.json');
+
+const SOURCE_MODES = ['default', 'url', 'upload'];
+
+function getSource() {
+  try {
+    const s = JSON.parse(fs.readFileSync(sourceFile(), 'utf8'));
+    if (SOURCE_MODES.includes(s.mode)) return s;
+  } catch {}
+  return { mode: 'default' };
+}
+
+function setSource(obj) {
+  const mode = obj.mode;
+  if (!SOURCE_MODES.includes(mode)) fail? // apk.js doesn't import fail. Let's keep it simple; validation happens in api.js.
+  const s = { mode, url: obj.url || undefined, updatedAt: Date.now() };
+  fs.mkdirSync(dir(), { recursive: true });
+  fs.writeFileSync(sourceFile(), JSON.stringify(s, null, 2));
+  return s;
+}
+```
+
+Wait, but `setSource` in apk.js — should it throw on invalid mode? The api.js does validation. But to be safe, apk.js can throw a plain Error. Actually let me think about what setSource should do. Per spec: "add exported setSource(obj), getSource(), saveUploadedApk(buf, filename)."
+
+setSource persists {mode, url, updatedAt}. The mode values: 'default', 'url', 'upload'. setSource('upload') is done implicitly via saveUploadedApk.
+
+Let me think about the source resolution for refreshApk:
+
+```js
+export async function refreshApk() {
+  if (busy) return apkInfo();
+  const src = getSource();
+  if (src.mode === 'upload') return apkInfo(); // never overwrite upload
+  busy = true;
+  try {
+    let meta;
+    if (src.mode === 'default') meta = await refreshFromReleases(config.apkReleasesUrl);
+    else meta = await refreshFromUrl(src.url); // releases API / repo URL / direct .apk
+    return meta || apkInfo();
+  } catch (e) {
+    console.error('[apk]', e.message);
+    return apkInfo();
+  } finally { busy = false; }
+}
+```
+
+But careful: original behavior — `if (!config.apkReleasesUrl || busy) return apkInfo();`. So if config.apkReleasesUrl is empty, default mode should skip. Let's keep that: for default mode, if no config.apkReleasesUrl, return apkInfo().
+
+Now, the URL classification:
+
+`refreshFromUrl(url)`:
+1. If url ends with `.apk` (case insensitive, ignore query/hash? The spec says "direct https URL ending .apk"). Direct download once. Download the buffer, validate, save with a filename derived from URL.
+2. If url is a GitHub repo URL `https://github.com/<o>/<r>` (no `/releases` etc.) → convert to `https://api.github.com/repos/<o>/<r>/releases?per_page=10`.
+3. Else assume it's a GitHub releases API URL → fetch releases JSON.
+
+Actually, to be more robust: after setSource normalizes the URL, or refreshApk normalizes. Let me do the normalization in a helper `releasesUrlFor(url)`.
+
+Let me write a helper:
+
+```js
+function classifyUrl(url) {
+  // returns 'apk' | 'releases' and normalized url
+  const u = String(url || '').trim();
+  if (/\.apk(\?.*)?(#.*)?$/i.test(u)) return { kind: 'apk', url: u };
+  const m = u.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/?$/);
+  if (m) return { kind: 'releases', url: `https://api.github.com/repos/${m[1]}/${m[2]}/releases?per_page=10` };
+  return { kind: 'releases', url: u };
+}
+```
+
+Wait, but what about a repo URL with trailing `.git`? Probably not needed. Keep simple.
+
+Now the download-once direct .apk: it should still store meta with source field. Let me factor the existing GitHub releases logic into a function `refreshFromReleases(apiUrl)` returning meta or null, and a `refreshFromDirectApk(url)` returning meta or null.
+
+Actually, let me look at the existing validation and write carefully. The existing code writes meta with `id`, `file`, `name`, etc. For direct .apk, `id` could be the URL (so refresh re-downloads? "download once" means: it downloads once, not checking for updates). Hmm. "direct https URL ending .apk (download once; validate PK zip magic like existing)".
+
+"download once" — meaning no auto-sync loop? Actually the requirement: for custom URL direct .apk, download once. For GitHub releases, it keeps syncing newest. For direct .apk, there's no "newest" concept, so we download once and store. On subsequent refreshes, we'd compare id; if id matches URL, we skip re-download. Let me set id = url for direct APK, so it doesn't re-download every time (download once). Actually "download once" might mean: just download the file once (no polling for newer). To be safe, I'll cache by id=url so refresh is idempotent.
+
+But there's a subtlety: if the admin sets a direct .apk URL and wants to re-fetch the same URL after it changed, they'd need to re-set source. That's acceptable. Actually simpler: for direct apk, always download when refreshApk is called explicitly (via /app/refresh), but the 6h auto-sync would re-download too. Hmm.
+
+Let me reconsider. "download once" is ambiguous. I think the intent is: unlike GitHub releases (which polls for the newest), a direct .apk URL just downloads that file once. To keep it simple and idempotent, set id = the url (or a hash of it) so subsequent refresh calls return the existing meta without re-downloading. That matches "download once".
+
+Actually, let me set the meta `id` for direct apk = `direct:${url}`. Then `if (cur && cur.id === id) return cur;` short-circuits re-download. Good.
+
+For the filename of a direct APK: derive from URL basename. E.g. `https://example.com/foo/MyApp.apk` → `MyApp.apk`. Sanitize with same regex `/[^\w.-]/g, '_'`. If empty, fallback to 'app.apk'.
+
+Now for the `source` field in meta. Currently meta is written without `source`. We add `source: src.mode` (default|url|upload). And `saveUploadedApk` writes meta with `source: 'upload'`.
+
+Now the atomic write + old file cleanup logic stays.
+
+Let me now think about how `refreshApk` picks the source and what happens with `source` field for default mode. For default mode, source = 'default'. For url mode, source = 'url'. For upload, source = 'upload'.
+
+Now `saveUploadedApk(buf, filename)`:
+- validate PK magic, size>1000 (like existing). Actually spec says "upload non-PK rejected; upload valid PK ok". The validation of PK happens in api.js too ("must end .apk and start with PK"). But saveUploadedApk should also validate and throw on invalid. Let me have saveUploadedApk validate and throw Error, and api.js catches → fail. Actually api.js already checks filename ends .apk and starts with PK before calling. But to be safe, saveUploadedApk also validates.
+
+Let me design `saveUploadedApk(buf, filename)`:
+```js
+export function saveUploadedApk(buf, filename) {
+  const name = String(filename || 'app.apk').replace(/[^\w.-]/g, '_');
+  if (buf.length < 1000 || buf[0] !== 0x50 || buf[1] !== 0x4b) throw new Error('not an APK');
+  fs.mkdirSync(dir(), { recursive: true });
+  const file = name;
+  const cur = apkInfo();
+  fs.writeFileSync(path.join(dir(), file + '.tmp'), buf);
+  fs.renameSync(path.join(dir(), file + '.tmp'), path.join(dir(), file));
+  const meta = { id: `upload:${Date.now()}`, file, name, size: buf.length, tag: 'upload', title: name,
+    version: (name.match(/v?(\d+(?:\.\d+)+)/) || [])[1] || 'upload', source: 'upload', fetchedAt: Date.now() };
+  fs.writeFileSync(metaFile(), JSON.stringify(meta, null, 2));
+  if (cur && cur.file !== file) fs.rmSync(path.join(dir(), cur.file), { force: true });
+  // persist source mode = upload
+  setSource({ mode: 'upload' });
+  console.log(`[apk] uploaded ${meta.name}`);
+  return meta;
+}
+```
+
+Wait, there's a subtlety with filename collision: if upload filename equals the existing file, the `.tmp` rename would overwrite the existing file which is the same path. That's fine since we write .tmp then rename to file (overwrite). But `cur.file !== file` check means we don't delete the old file if same name — which is correct because we just overwrote it.
+
+Actually there's a subtle issue: if the existing meta file references `file = 'MyApp.apk'` and we upload a new `MyApp.apk`, the `.tmp` write → rename overwrites the same file, and `cur.file === file`, so no rm. Good.
+
+But what if upload name is the same as the current GitHub-synced file? E.g. GitHub synced `JSTether-v4.0.apk`, admin uploads `JSTether-v4.0.apk`. Then rename overwrites that file (same path), meta updated with source 'upload'. Old file is now the uploaded content. Fine. But if GitHub had file `a.apk` and admin uploads `b.apk`, then `cur.file = a.apk` != `b.apk`, so rm a.apk. Good.
+
+Also, on upload we should set source mode to upload so auto-sync won't overwrite. saveUploadedApk calls setSource({mode:'upload'}). Good.
+
+Now the `getSource()` default returns `{ mode: 'default' }`. But should it include url? The spec says source file {mode,url,updatedAt}. For default mode, url is null. Fine.
+
+Now about SSRF validation in api.js PUT /app/source. Validation: `https only, no localhost/private IP (SSRF)`. So we need to parse the URL, check protocol === 'https:', hostname not localhost, not IP in private ranges, not resolving to private IP.
+
+Let me write a validation helper in api.js:
+
+```js
+function assertSafeUrl(raw) {
+  let u;
+  try { u = new URL(raw); } catch { fail(400, 'Enter a valid URL'); }
+  if (u.protocol !== 'https:') fail(400, 'Only https:// URLs are allowed');
+  const host = u.hostname.toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost') || host === 'localhost.localdomain') fail(400, 'Local addresses are not allowed');
+  // numeric IP?
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(':')) {  // IPv4 or IPv6 literal
+    if (isPrivateIp(host)) fail(400, 'Private addresses are not allowed');
+  } else {
+    // also check for private IPv4 embedded? Not needed for hostname, but resolve? 
+  }
+  return u;
+}
+```
+
+But requirement mentions "no localhost/private IP (SSRF)". The main risk: someone sets `https://127.0.0.1/...` or `https://192.168.1.1/...` or `https://localhost/...`. Also DNS rebinding where hostname resolves to private IP. The test requires:
+- reject http://127.0.0.1 (this is http + private, double reject)
+- reject non-https (http)
+
+Let me check the test requirement precisely: "set source url -> mock server asset served; reject http://127.0.0.1 and non-https; upload non-PK rejected; upload valid PK ok and survives refresh; reset default restores."
+
+So tests will:
+1. Set source url to a mock server serving an .apk (direct https? but mock server is http://127.0.0.1!). Hmm. Wait — the mock server in test is `http://127.0.0.1:PORT`. But PUT /app/source validates https only. So how does "set source url -> mock server asset served" work in tests?
+
+The test aux server is `http://127.0.0.1`. So the test needs to set a source URL that is https but... that won't work with the local http server. Unless the test uses a different approach.
+
+Hmm, wait. Let me re-read: "set source url -> mock server asset served". This means the test sets a source URL pointing at the mock server's `/apk` asset, and then refresh/download serves it.
+
+But SSRF validation rejects http and private IP. The mock server is http://127.0.0.1. So the test must either:
+- The test directly manipulates `apk-source.json` file to bypass validation, then calls refresh. OR
+- The test uses the GitHub releases API URL from the mock server (which is `http://127.0.0.1/releases`), but that's also http/private.
+
+Wait, actually the test already sets `APK_RELEASES_URL: ${auxUrl}/releases` where auxUrl is `http://127.0.0.1:PORT`. And the existing test does `A('POST', '/api/admin/app/refresh')` and gets version '4.0'. So the default mode already uses an http localhost URL for the releases API! That's config.apkReleasesUrl, which is NOT subject to SSRF validation (it's env config, trusted).
+
+So for the NEW tests, how do they test "set source url -> mock server asset served"? They need to set a custom URL. But custom URLs are validated https-only.
+
+Options:
+1. The test writes `apk-source.json` directly (via fs) to set mode 'url' with the mock URL, then calls refresh. This bypasses the API validation and tests refreshApk's URL handling.
+2. The test could set a `https://` URL but there's no https server.
+
+Actually, I think the cleaner approach for the test: use the aux server to also serve a GitHub releases JSON under a path, and set source via direct fs write to apk-source.json pointing to the aux URL. But wait — the test must test the API PUT /app/source too (reject http, private). And "set source url -> mock server asset served" — maybe this is done via fs writing the source file, OR maybe the test sets a source URL that passes validation.
+
+Hmm, but actually, wait. Let me reconsider. Maybe the SSRF validation should be more nuanced: allow http? No — spec explicitly says "validates https only, no localhost/private IP (SSRF)". And "reject http://127.0.0.1 and non-https".
+
+So the test for "set source url -> mock server asset served" must go through a path that doesn't require https validation. The natural way: the test directly writes `dataDir/app/apk-source.json` with `{mode:'url', url: auxUrl + '/apk', updatedAt: ...}` then calls POST /app/refresh, then checks GET /app.apk serves the buffer.
+
+Actually, let me reconsider the whole test approach. The test can also verify the "github repo URL conversion" and "direct .apk" logic by writing the source file directly and calling refresh. But the spec says test should verify "PUT /api/admin/app/source accepts github repo URL, releases api URL, direct https .apk". That's in acceptance criteria A2, but the test bullet says "set source url -> mock server asset served; reject http://127.0.0.1 and non-https".
+
+Let me focus on what the TEST must do (the test file is what I extend), and the acceptance criteria are broader. I'll write tests that:
+
+1. Test PUT /app/source rejects:
+   - `http://127.0.0.1/foo.apk` (http + private) → 400
+   - non-https e.g. `http://example.com/foo.apk` → 400
+   - `https://127.0.0.1/foo.apk` (private) → 400
+   - `https://localhost/foo.apk` → 400
+2. Test PUT /app/source accepts github repo URL (e.g. `https://github.com/RafieRosliputra/a7rii-android-push`) — but this would then trigger refreshApk which fetches the real GitHub API. That would fail in test (no network / would hit real GitHub). Hmm.
+
+Actually, wait. When PUT /app/source is called with a valid URL, it "then refreshApk and return result". So refreshApk would try to fetch the URL. For a github repo URL, it converts to api.github.com and fetches — real network call, could fail. The handler catches errors and returns apkInfo(). So it wouldn't crash, but it would attempt network.
+
+For the test, to avoid real network, I should NOT test the "accepts github repo URL" via actually triggering a network fetch. But the acceptance says the API must accept those URLs. The test can verify acceptance by checking the response doesn't 400 and source file is updated, OR use the direct .apk URL pointing at the mock server... but mock is http.
+
+This is getting complicated. Let me think about what's reasonable and testable without network:
+
+The test mock aux server serves `/releases` (GitHub releases JSON) and `/apk` (PK buffer). Both are http://127.0.0.1.
+
+Given SSRF validation blocks http and private IPs for the API endpoint, I need a way to test the refresh logic with the mock server. The cleanest: write `apk-source.json` directly to `{mode:'url', url: auxUrl + '/apk'}` (or `/releases`), then call POST /app/refresh, verify the served asset.
+
+For testing "accepts github repo URL, releases api URL, direct https .apk" — I can test the URL validation/conversion logic at the unit level by... hmm, but there's no exported helper for that in a way the test can import easily. Actually, the test imports `../src/apk.js`? Currently it imports `../src/server.js`, `../src/db.js`, `../src/storage.js`. It could import apk.js too.
+
+Alternatively, I can test PUT /app/source acceptance WITHOUT triggering a real fetch by checking that:
+- `https://github.com/RafieRosliputra/foo` → status 200 (refresh fails gracefully, returns apkInfo which may be null, but source is persisted). Response `{apk, source}` where source.mode === 'url', source.url === the repo URL (or normalized?).
+
+But the concern: refreshApk would fetch `https://api.github.com/...` for real. With AbortSignal.timeout(15000), the test would block up to 15s and hit real GitHub. That's slow and non-deterministic, plus network access. The test environment: node test, real network might be available but we shouldn't rely on it.
+
+Better approach: make refreshApk's source resolution testable by having the test directly manipulate the source file to point at the mock server, and separately test the API validation of safe/unsafe URLs.
+
+Actually, I realize I can make the test's "accept github repo URL / releases api URL / direct .apk" work against the mock server IF I don't require https in a way that blocks the mock. But spec requires https validation.
+
+Wait — let me reconsider. What if I make the SSRF validation allow the test to pass via a clever trick? No, that would violate the spec.
+
+Let me reconsider: perhaps the test for "set source url -> mock server asset served" is intended to write the source file directly (bypassing API SSRF), OR the test is expected to set a custom URL through the API where the URL is `https://...` but the mock serves over https? No, mock is http.
+
+Actually, let me reconsider the SSRF validation. The requirement: "validates https only, no localhost/private IP (SSRF)". This is about what URLs the ADMIN can configure. In the test, the mock server is a test fixture at 127.0.0.1. The test needs to exercise refresh with the mock. The natural test design:
+
+- For "set source url → mock asset served": write `apk-source.json` directly with the mock URL (since the test already writes DATA_DIR etc.), then `POST /api/admin/app/refresh`, then `GET /api/admin/app.apk` → body starts with PK and length matches.
+
+- For "reject http://127.0.0.1 and non-https": call `PUT /api/admin/app/source` with `{mode:'url', url:'http://127.0.0.1/x.apk'}` → 400, and `{mode:'url', url:'http://example.com/x.apk'}` → 400, `{mode:'url', url:'https://127.0.0.1/x.apk'}` → 400.
+
+This satisfies the test bullets. And the acceptance criteria A2 (accepts github repo URL, releases api URL, direct https .apk) is about the SERVER behavior, which I implement correctly; the test can also verify acceptance via the direct-source-file write + refresh (for direct .apk and releases api) and via checking source persistence. But actually I should also add a test that PUT accepts a valid https direct .apk URL and persists it — but then refresh would fetch it (real network). Hmm.
+
+I think the cleanest testable design: allow the PUT to persist source even if refresh fails. So `PUT /app/source {mode:'url', url:'https://github.com/o/r'}` → persists source, attempts refresh (network fails), returns `{apk: null, source: {...}}` with status 200. Test can assert status 200 and source persisted with mode 'url'. But refresh would block 15s on real network. Not great.
+
+To avoid real network in tests, I can make the test verify acceptance WITHOUT triggering fetch by... hmm, there's no way to disable fetch.
+
+Alternative: For the acceptance test, use direct .apk URL that is `https://` but the mock... no.
+
+OK here's a cleaner idea: The mock aux server is already there. I can extend the aux server to serve the APK asset and a releases JSON. For the "accepts URL" test, I can point the direct source-file at the mock and call refresh. But for "PUT /app/source accepts github repo URL etc.", I'll test the *validation* function by testing the conversion/acceptance at the point of persistence, using a stubbed refresh.
+
+Actually, wait — maybe simplest: I can make `refreshApk` NOT be triggered by PUT in a way that blocks, but the spec says "then refreshApk and return result". So PUT triggers refresh.
+
+Let me reconsider whether refresh on a github repo URL actually makes a network call that fails fast. `https://api.github.com/...` with timeout 15s. In the test environment (offline CI?), it'd take 15s. Even online, it hits GitHub. This is bad for tests.
+
+Better: I'll structure the test to avoid calling PUT with real-network URLs. Instead:
+
+Test flow (new test block):
+1. Directly write apk-source.json (via fs) with `{mode:'url', url: auxUrl+'/apk', updatedAt}` → POST /app/refresh → assert apk served (this tests direct .apk download path + refresh with source file). Actually wait, auxUrl+'/apk' is http://127.0.0.1/apk — direct .apk URL. The classifyUrl sees it ends with .apk → direct download. Good. This tests the direct .apk custom URL path.
+
+2. For GitHub releases API URL path: write source with `{mode:'url', url: auxUrl+'/releases'}` → refresh → assert version 4.0 (releases JSON). This tests releases API URL path.
+
+3. For GitHub repo URL conversion: I can test this by writing source with `{mode:'url', url: 'https://github.com/RafieRosliputra/a7rii-android-push'}` — but that hits real GitHub. Instead, test the conversion logic via a unit import. Hmm. Actually I could test conversion by... 
+
+Let me step back. The core test bullets are:
+1. set source url -> mock server asset served ✓ (write source file + refresh)
+2. reject http://127.0.0.1 and non-https ✓ (PUT with bad URLs → 400)
+3. upload non-PK rejected ✓ (POST /app/upload with non-PK body → 400)
+4. upload valid PK ok and survives refresh ✓ (POST /app/upload valid PK → 200, then POST /app/refresh → apk unchanged/source stays upload)
+5. reset default restores ✓ (PUT /app/source {mode:'default'} → then refresh uses config.apkReleasesUrl which is the mock /releases → version 4.0 restored)
+
+These 5 cover the test file requirements. The acceptance A2 (accepts github repo/releases/direct https) is covered by implementation; I can additionally add a small test for the URL validation/conversion if feasible without network.
+
+Actually, I realize I CAN test github repo URL acceptance and releases API acceptance without network by making refreshApk's behavior deterministic. But there's a simpler path: expose the URL normalization as an exported function and unit-test it directly. But the spec's RULES say I may only modify 4 files. I can export a helper from apk.js (like `normalizeSourceUrl`). Then test it by importing apk.js in the test. That's clean and avoids network.
+
+But wait, does the test currently import apk.js? No. I can add `const apk = await import('../src/apk.js');`. That's allowed (modifying test file). And apk.js is already imported by api.js anyway.
+
+Hmm, but actually there's an even simpler and more faithful approach for testing github repo URL acceptance: The mock aux server could serve the releases at a path, and I could configure the source with a github repo URL, but intercept... no, can't intercept api.github.com.
+
+Let me go with: test the API validation directly (rejections + reset default + upload), test direct .apk and releases URL via source-file writes + refresh, and unit-test the URL conversion helper if I export it. Actually, I'll keep it minimal and faithful:
+
+Let me now also reconsider: does PUT /app/source need to reject private IP for the hostname form? Test says "reject http://127.0.0.1". Also "non-https". I'll implement robust private-IP detection for both IPv4 and IPv6 literals, localhost, and also private hostnames? The spec says "no localhost/private IP (SSRF)". I'll check: protocol https, hostname not localhost/.localhost, and if hostname is an IP literal, must not be private/loopback/link-local/unspecified. I'll also block hostnames that end in `.local`, `.internal`, `.lan`? Not required. Keep to localhost + IP literals + maybe metadata IP (169.254). Let me write a solid `isPrivateHost`.
+
+Actually, to be thorough for SSRF, I'll:
+- require https
+- reject if hostname is 'localhost' or ends with '.localhost' or equals 'localhost.localdomain'
+- if hostname parses as IPv4: reject if private ranges (10/8, 172.16/12, 192.168/16, 127/8, 169.254/16, 0/8, 100.64/10 (CGNAT), 192.0.0/24, etc.)
+- if hostname is IPv6 (contains ':'): reject if not a global address; simplest: reject all IPv6 literals? Spec says private IP. IPv6 has ::1 (loopback), fe80:: (link-local), fc00::/7 (unique local). I'll reject ::1, fe80, fc/fd prefixes, and any non-global. To keep simple, reject IPv6 literals that are loopback/link-local/ULA; but to be safe and simple, I'll reject ALL IPv6 literal addresses? That might be too strict but acceptable for this admin-only feature. Actually, hmm. GitHub and most legit hosts are hostnames, not IPv6 literals. I'll reject IPv6 literals entirely as "private/unsafe" — actually that would reject a legit public IPv6 URL like `https://[2606:...]`. But nobody sets an IP for GitHub. For safety, I'll do a simple check: reject if IPv6 literal is loopback (::1), link-local (fe80::/10), or ULA (fc00::/7), otherwise allow. That requires parsing IPv6, which is more code.
+
+Given scope, I'll do: for IPv4 literals use `net.isIP` and range checks; for IPv6 literals, reject loopback ::1 and reject any address that isn't clearly global — simplest robust approach: use Node's `net.isIP` to detect IP, then for IPv4 do range checks, for IPv6 do a manual check of loopback/link-local/ULA/unspecified/multicast and reject those, allow the rest. Let me write a compact IPv6 check.
+
+Actually, let me keep it pragmatic. The test only needs: reject http://127.0.0.1 and non-https. Acceptance says "rejects http/private/local". I'll implement:
+
+```js
+import net from 'node:net';
+
+function isPrivateIp(host) {
+  if (net.isIP(host) === 4) {
+    const p = host.split('.').map(Number);
+    if (p[0] === 127 || p[0] === 10) return true;
+    if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return true;
+    if (p[0] === 192 && p[1] === 168) return true;
+    if (p[0] === 169 && p[1] === 254) return true;
+    if (p[0] === 0) return true;
+    if (p[0] === 100 && p[1] >= 64 && p[1] <= 127) return true;
+    return false;
+  }
+  if (net.isIP(host) === 6) {
+    const lower = host.toLowerCase();
+    if (lower === '::1' || lower === '::') return true;
+    if (lower.startsWith('fe8') || lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb')) return true; // fe80::/10
+    if (lower.startsWith('fc') || lower.startsWith('fd')) return true; // fc00::/7
+    if (lower.startsWith('ff')) return true; // multicast
+    return false;
+  }
+  return false;
+}
+
+function assertSafeUrl(raw) {
+  let u;
+  try { u = new URL(String(raw || '')); } catch { fail(400, 'Enter a valid URL'); }
+  if (u.protocol !== 'https:') fail(400, 'Only https:// URLs are allowed');
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host === 'localhost.localdomain' || host.endsWith('.local')) fail(400, 'Local addresses are not allowed');
+  if (net.isIP(host) && isPrivateIp(host)) fail(400, 'Private addresses are not allowed');
+  return u;
+}
+```
+
+Wait, `u.hostname` for IPv6 returns without brackets in Node (e.g. `[::1]` → `::1`? Actually URL.hostname returns `[::1]`? Let me recall: `new URL('https://[::1]/').hostname` returns `[::1]` with brackets in some Node versions... Actually it returns `[::1]`. Hmm, let me handle by stripping brackets. I did `.replace(/^\[|\]$/g, '')`. That handles it.
+
+But wait, net.isIP on `::1` returns 6. Good.
+
+Now, the URL for PUT /app/source: what modes? `{mode:'default'|'url', url?}`. For mode 'url', url required and validated. For 'default', url ignored.
+
+Let me now design the api.js routes.
+
+```js
+A('GET', '/app', (req, res) => sendJson(res, 200, { apk: apkJson(apkInfo()), source: getSource() }));
+A('POST', '/app/refresh', async (req, res) => { const m = await refreshApk(); sendJson(res, 200, { apk: apkJson(m), source: getSource() }); });
+A('PUT', '/app/source', async (req, res) => {
+  const body = await readJson(req);
+  const mode = body.mode;
+  if (mode === 'default') {
+    setSource({ mode: 'default' });
+    const m = await refreshApk();
+    return sendJson(res, 200, { apk: apkJson(m), source: getSource() });
+  }
+  if (mode === 'url') {
+    const url = assertSafeUrl(body.url).toString();
+    // normalize? Keep the original string for repo URL conversion at refresh time. Store as-is.
+    setSource({ mode: 'url', url });
+    const m = await refreshApk();
+    return sendJson(res, 200, { apk: apkJson(m), source: getSource() });
+  }
+  fail(400, 'Mode must be "default" or "url"');
+});
+A('POST', '/app/upload', async (req, res) => {
+  const buf = await readBody(req, 100 * 1024 * 1024);
+  const name = String(req.headers['x-filename'] || '');
+  if (!/\.apk$/i.test(name)) fail(415, 'The file must end in .apk');
+  if (buf.length < 2 || buf[0] !== 0x50 || buf[1] !== 0x4b) fail(415, 'Not a valid APK (PK)');
+  const m = saveUploadedApk(buf, name);
+  sendJson(res, 200, { apk: apkJson(m), source: getSource() });
+});
+```
+
+Wait, the spec says `PUT /app/source` and `POST /app/upload` — but existing `/app/refresh` is POST and `/app` is GET. Note there's already `A('GET', '/app', ...)` returning `{ apk: apkJson(apkInfo()) }`. I need to add `source` to it.
+
+Also note the current admin.html calls `api('GET', '/api/admin/app')` and expects `d.apk`. Adding `source` is fine.
+
+Now, important: `apkJson(m)` — the current apkJson filters to {name, version, size, tag, published}. For admin GET /app, maybe we want to include source in apk meta? The spec says "meta gets source field". apkJson is used for photographer too. Let me check: `apkJson` is used in `/api/shoot/app` (photographer) and admin `/app`. Photographer routes unchanged — photographer should NOT see source (spec: "photographer routes unchanged"). So apkJson stays as-is (no source). The `source` field goes in the top-level response `{apk, source}` from getSource(). And the meta file (apk.json) gets `source` field (for the file itself).
+
+Actually re-reading: "meta gets `source` field (default|url|upload)". "meta" = apk.json meta. And "GET /app returns {apk, source}". So `source` in the JSON response comes from getSource() (the source file), which reflects current mode. The meta file also records source for the specific file. Both. I'll add `source` to meta and also `getSource()` in response.
+
+Now, let me handle the `getSource()` shape returned to admin: `{mode, url, updatedAt}`. For default, url undefined. That's fine.
+
+Now, the refresh logic in apk.js. Let me carefully rewrite.
+
+Let me also consider: the existing `refreshApk` has the `busy` flag and the `!config.apkReleasesUrl` guard. I need to preserve "default behaviour unchanged when no apk-source.json" (A1): when no source file, getSource() returns {mode:'default'}, refresh uses config.apkReleasesUrl exactly as before. 
+
+Also, when mode is 'default' and config.apkReleasesUrl is empty, skip (return apkInfo()). Keep.
+
+Let me write apk.js fully.
+
+```js
+// JS Tether APK for signed-in photographers and admins.
+// The server keeps a copy of the newest APK from the GitHub Releases of the app repo
+// (public, no token needed), checked at start and every 6 hours.
+// The admin can switch where this APK comes from (see apk-source.json): default (env/config),
+// a custom URL (GitHub releases API / GitHub repo / direct .apk), or a manual upload.
+import fs from 'node:fs';
+import path from 'node:path';
+import { config } from './config.js';
+
+const dir = () => path.join(config.dataDir, 'app');
+const metaFile = () => path.join(dir(), 'apk.json');
+const sourceFile = () => path.join(dir(), 'apk-source.json');
+
+const MODES = ['default', 'url', 'upload'];
+
+export function getSource() {
+  try {
+    const s = JSON.parse(fs.readFileSync(sourceFile(), 'utf8'));
+    if (MODES.includes(s.mode)) return { mode: s.mode, url: s.url || undefined, updatedAt: s.updatedAt || null };
+  } catch { /* default */ }
+  return { mode: 'default' };
+}
+
+export function setSource(obj) {
+  const mode = MODES.includes(obj?.mode) ? obj.mode : 'default';
+  const s = { mode, url: mode === 'url' ? String(obj.url || '') : undefined, updatedAt: Date.now() };
+  fs.mkdirSync(dir(), { recursive: true });
+  fs.writeFileSync(sourceFile(), JSON.stringify(s, null, 2));
+  return s;
+}
+
+export function apkInfo() { ... unchanged ... }
+export const apkPath = (m) => path.join(dir(), m.file);
+
+let busy = false;
+export async function refreshApk() {
+  if (busy) return apkInfo();
+  const src = getSource();
+  if (src.mode === 'upload') return apkInfo(); // manual upload: sync must not overwrite it
+  if (src.mode === 'default' && !config.apkReleasesUrl) return apkInfo();
+  busy = true;
+  try {
+    const meta = src.mode === 'default'
+      ? await refreshFromReleases(config.apkReleasesUrl)
+      : await refreshFromUrl(src.url);
+    return meta || apkInfo();
+  } catch (e) {
+    console.error('[apk]', e.message);
+    return apkInfo();
+  } finally { busy = false; }
+}
+```
+
+Now `refreshFromReleases(apiUrl)` is the existing logic refactored (fetch releases JSON → pick asset → download). `refreshFromUrl(url)`:
+```js
+async function refreshFromUrl(url) {
+  const u = String(url || '');
+  if (/\.apk(\?|#|$)/i.test(u)) return refreshFromDirectApk(u);
+  return refreshFromReleases(releasesApiUrl(u));
+}
+```
+
+Wait, but for direct .apk, "download once". Let me handle id = `direct:${u}` and check `cur.id === id` to skip.
+
+`releasesApiUrl(u)`:
+```js
+function releasesApiUrl(u) {
+  const m = u.match(/^https:\/\/github\.com\/([^/]+)\/([^/#?]+)\/?$/);
+  if (m) return `https://api.github.com/repos/${m[1]}/${m[2]}/releases?per_page=10`;
+  return u;
+}
+```
+
+Now let me write refreshFromReleases (refactored from existing):
+```js
+async function refreshFromReleases(apiUrl) {
+  const r = await fetch(apiUrl, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'livephoto' }, signal: AbortSignal.timeout(15000) });
+  if (!r.ok) throw new Error(`releases ${r.status}`);
+  const releases = await r.json();
+  let pick = null;
+  for (const rel of releases) {
+    if (rel.draft) continue;
+    const asset = (rel.assets || []).find((a) => /\.apk$/i.test(a.name));
+    if (asset) { pick = { rel, asset }; break; }
+  }
+  if (!pick) return apkInfo();
+  const cur = apkInfo();
+  const id = `${pick.rel.tag_name}:${pick.asset.id}:${pick.asset.updated_at || ''}`;
+  if (cur && cur.id === id) return cur;
+  const dl = await fetch(pick.asset.browser_download_url, { signal: AbortSignal.timeout(120000) });
+  if (!dl.ok) throw new Error(`download ${dl.status}`);
+  const buf = Buffer.from(await dl.arrayBuffer());
+  validateApk(buf);
+  const file = sanitize(pick.asset.name);
+  return saveApk(buf, file, { id, name: pick.asset.name, tag: pick.rel.tag_name, title: pick.rel.name || pick.rel.tag_name,
+    version: (pick.asset.name.match(/v?(\d+(?:\.\d+)+)/) || [])[1] || pick.rel.tag_name, published: pick.rel.published_at, source: 'default' });
+}
+```
+
+Wait, source should be 'url' when called from refreshFromUrl (releases API) vs 'default' when from config. Let me pass source through. So `refreshFromReleases(apiUrl, sourceMode)`.
+
+Let me refactor into a common `saveApk(buf, file, metaFields)` that does atomic write, old cleanup, meta write. And `validateApk(buf)` throws.
+
+```js
+function validateApk(buf) {
+  if (!buf || buf.length < 1000 || buf[0] !== 0x50 || buf[1] !== 0x4b) throw new Error('not an APK'); // zip "PK"
+}
+const sanitize = (name) => String(name || 'app.apk').replace(/[^\w.-]/g, '_') || 'app.apk';
+
+function saveApk(buf, file, fields) {
+  fs.mkdirSync(dir(), { recursive: true });
+  fs.writeFileSync(path.join(dir(), file + '.tmp'), buf);
+  fs.renameSync(path.join(dir(), file + '.tmp'), path.join(dir(), file));
+  const cur = apkInfo();
+  const meta = { ...fields, file, size: buf.length, fetchedAt: Date.now() };
+  fs.writeFileSync(metaFile(), JSON.stringify(meta, null, 2));
+  if (cur && cur.file !== file) fs.rmSync(path.join(dir(), cur.file), { force: true });
+  console.log(`[apk] ${meta.name}${meta.tag ? ` (${meta.tag})` : ''} saved`);
+  return meta;
+}
+```
+
+Wait — there's a subtlety with the old-file-cleanup ordering. In the original, `cur` is read BEFORE writing the new meta (line 35: `const cur = apkInfo();` before download; line 49 after write uses `cur.file`). In my refactor, I read `cur = apkInfo()` AFTER writing the new meta file. That's a bug: apkInfo() would return the NEW meta (since metaFile is now the new one), so `cur.file === file` always, and old file never cleaned.
+
+Let me read `cur` BEFORE writing meta. Let me restructure:
+
+```js
+function saveApk(buf, file, fields) {
+  fs.mkdirSync(dir(), { recursive: true });
+  const cur = apkInfo();
+  fs.writeFileSync(path.join(dir(), file + '.tmp'), buf);
+  fs.renameSync(path.join(dir(), file + '.tmp'), path.join(dir(), file));
+  const meta = { ...fields, file, size: buf.length, fetchedAt: Date.now() };
+  fs.writeFileSync(metaFile(), JSON.stringify(meta, null, 2));
+  if (cur && cur.file !== file) fs.rmSync(path.join(dir(), cur.file), { force: true });
+  console.log(`[apk] ${meta.name}${meta.tag ? ` (${meta.tag})` : ''} saved`);
+  return meta;
+}
+```
+
+Good. Read cur before overwriting meta.
+
+Now `refreshFromDirectApk(u)`:
+```js
+async function refreshFromDirectApk(u) {
+  const cur = apkInfo();
+  const id = `direct:${u}`;
+  if (cur && cur.id === id) return cur; // download once
+  const r = await fetch(u, { signal: AbortSignal.timeout(120000) });
+  if (!r.ok) throw new Error(`download ${r.status}`);
+  const buf = Buffer.from(await r.arrayBuffer());
+  validateApk(buf);
+  let name;
+  try { name = path.posix.basename(new URL(u).pathname); } catch { name = 'app.apk'; }
+  const file = sanitize(name);
+  return saveApk(buf, file, { id, name: name || 'app.apk', tag: 'url', title: name || 'app.apk',
+    version: (name.match(/v?(\d+(?:\.\d+)+)/) || [])[1] || 'url', published: null, source: 'url' });
+}
+```
+
+Hmm, `version` for direct apk: derive from filename, fallback to something. Using 'url' as version is odd. Maybe version should be null or derived. Let me use `(name.match(/v?(\d+(?:\.\d+)+)/) || [])[1] || null`. And apkJson includes version; null is fine (JSON null). Actually apkJson returns `version: m.version`; if null, it'll be null. For admin display "not downloaded yet" only when no apk. Hmm, showApk uses d.apk.version. If null, template `${d.apk.version}` becomes "null". Let me keep fallback to a sensible string. I'll use the filename-derived version or 'custom'. Let me use `|| 'custom'`.
+
+Actually, let me reconsider what fields are needed. apkJson: {name, version, size, tag, published}. For direct apk: name = filename, version = derived or 'custom', tag = null (or 'custom'), published = null. That's fine.
+
+For upload: name = filename, version = derived or 'upload', tag = null. source = 'upload'.
+
+Let me finalize the meta fields. Actually, original meta has: id, file, name, size, tag, title, version, published, fetchedAt. I'll add `source`.
+
+Now, the `refreshFromUrl` needs to pass `source: 'url'` to the releases path. Let me write:
+
+```js
+async function refreshFromUrl(url) {
+  const u = String(url || '');
+  if (/\.apk(?:[?#].*)?$/i.test(u)) return refreshFromDirectApk(u);
+  return refreshFromReleases(releasesApiUrl(u), 'url');
+}
+```
+
+And `refreshFromReleases(apiUrl, sourceMode = 'default')`.
+
+Now let me write the complete apk.js.
+
+Also need `saveUploadedApk(buf, filename)`:
+```js
+export function saveUploadedApk(buf, filename) {
+  validateApk(buf);
+  const name = sanitize(filename);
+  const cur = apkInfo();
+  fs.mkdirSync(dir(), { recursive: true });
+  fs.writeFileSync(path.join(dir(), name + '.tmp'), buf);
+  fs.renameSync(path.join(dir(), name + '.tmp'), path.join(dir(), name));
+  const meta = { id: `upload:${Date.now()}`, file: name, name, size: buf.length, tag: null, title: name,
+    version: (name.match(/v?(\d+(?:\.\d+)+)/) || [])[1] || 'upload', published: null, source: 'upload', fetchedAt: Date.now() };
+  fs.writeFileSync(metaFile(), JSON.stringify(meta, null, 2));
+  if (cur && cur.file !== name) fs.rmSync(path.join(dir(), cur.file), { force: true });
+  setSource({ mode: 'upload' });
+  console.log(`[apk] uploaded ${meta.name}`);
+  return meta;
+}
+```
+
+Wait, `setSource({mode:'upload'})` writes source file with url undefined. But getSource() returns `{mode:'upload', url: undefined, updatedAt}`. Good. And refreshApk checks `src.mode === 'upload'` → returns apkInfo() without overwriting. 
+
+But careful: I call `setSource` AFTER writing meta. But I read `cur = apkInfo()` before writing meta — good. But setSource writes source file, and getSource is independent of apk.json. Good.
+
+One concern: in `saveUploadedApk`, if filename sanitized to empty? sanitize returns 'app.apk' fallback. And api.js checks filename ends with .apk before calling. But sanitize could produce e.g. "app.apk" if name is "app.apk" → "app.apk". Fine.
+
+Now, there's a subtle issue: `saveApk` and `saveUploadedApk` both read `cur` before writing. But in `saveApk`, I read `cur` after mkdir but before writing meta. Good.
+
+Now let me also double check: does `refreshApk` need to guard `busy` AND avoid re-entrancy from startApkSync? startApkSync calls refreshApk() immediately and every 6h. Fine.
+
+Now the SSRF validation + `assertSafeUrl` returns a URL object; I'll store `u.toString()` as the url (normalized). Actually for github repo URL conversion, I store the ORIGINAL url (the repo URL or releases API or direct .apk). The refresh classifies it. So I store `url` as given (after validation), not normalized. Let me store `String(u)` (the href). For `https://github.com/o/r`, `new URL(...).toString()` = `https://github.com/o/r`. Good. For direct apk `https://example.com/a.apk`, toString preserves. For releases API, preserves query.
+
+Actually, careful: `new URL('https://github.com/o/r').toString()` → `https://github.com/o/r` (no trailing slash). Good, matches my releasesApiUrl regex `^https:\/\/github\.com\/([^/]+)\/([^/#?]+)\/?$`.
+
+Now let me think about the api.js imports: need `net` for isIP, and import `getSource, setSource, saveUploadedApk` from apk.js.
+
+api.js currently imports: `import { apkInfo, refreshApk, sendApk } from './apk.js';`. Change to add getSource, setSource, saveUploadedApk.
+
+Also need `import net from 'node:net';` at top.
+
+Let me now also think about `readBody` with 100MB limit: `await readBody(req, 100 * 1024 * 1024)`. readBody rejects with 413 if exceeds. Good. But note: readBody is imported already.
+
+Now, for POST /app/upload, the body is raw. The device helper in test: `device(method, url, {raw, headers})`. So test can call `A('POST', '/api/admin/app/upload', { raw: Buffer, headers: {'x-filename': 'My.apk'} })`. The A helper merges ADMIN headers. Note in the device call, `if (body !== undefined) h['content-type'] = 'application/json'`. For raw, body is undefined, so no content-type set — good for raw upload. But wait, the A helper: `A = (m, u, o = {}) => admin(m, u, { ...o, headers: { ...ADMIN, ...(o.headers || {}) } })`. So headers = ADMIN + x-filename. Good.
+
+Now the admin.html changes. I need to add to the apk card (in the aside elist, `#apkCard`) a small section:
+- current source line (e.g. "Source: default" / "custom URL" / "uploaded")
+- text input URL + "Pautkan" button (set URL)
+- "Reset default" button
+- file input "Upload APK" with progress/toast
+
+Wait, the spec says English UI "like rest of admin page" but the button label is "Pautkan" (BM for "link/connect"). The instruction explicitly says the button text is "Pautkan". So I'll use "Pautkan" as the label (it's specified), rest English.
+
+Let me design the HTML in `#apkCard`:
+
+Current:
+```html
+<div class="apkcard hidden" id="apkCard">
+  <div><b>JS Tether app</b> <span class="small muted" id="apkVer"></span></div>
+  <div class="row"><a class="btn small" href="/api/admin/app.apk" download id="apkDl">Download APK</a><button class="btn small ghost" id="apkRefresh">Check for update</button></div>
+</div>
+```
+
+New:
+```html
+<div class="apkcard hidden" id="apkCard">
+  <div><b>JS Tether app</b> <span class="small muted" id="apkVer"></span></div>
+  <div class="small muted" id="apkSource">source: default</div>
+  <div class="row"><a class="btn small" href="/api/admin/app.apk" download id="apkDl">Download APK</a><button class="btn small ghost" id="apkRefresh">Check for update</button></div>
+  <div class="row">
+    <input class="input" id="apkUrl" type="url" placeholder="https://github.com/owner/repo or .apk URL" style="flex:1 1 180px;min-width:0;padding:6px 8px">
+    <button class="btn small" id="apkSetUrl">Pautkan</button>
+    <button class="btn small ghost" id="apkReset">Reset default</button>
+  </div>
+  <div class="row">
+    <input type="file" id="apkFile" accept=".apk,application/vnd.android.package-archive" class="hidden">
+    <button class="btn small" id="apkUpload">Upload APK</button>
+  </div>
+</div>
+```
+
+Wait, "no new libs" — fine, all vanilla.
+
+Now the JS wiring in `start()` and `showApk`.
+
+`showApk(d)` currently takes the response object and reads d.apk. I need to also render source. Let me update showApk to handle `d.source`:
+
+```js
+function showApk(d) {
+  $('#apkCard').classList.remove('hidden');
+  if (d && d.apk) { $('#apkVer').textContent = `${d.apk.version} · ${Math.max(1, Math.round(d.apk.size / 1024))} KB`; $('#apkDl').classList.remove('hidden'); }
+  else { $('#apkVer').textContent = 'not downloaded yet'; $('#apkDl').classList.add('hidden'); }
+  const src = d && d.source ? d.source : { mode: 'default' };
+  const label = src.mode === 'upload' ? 'uploaded file' : src.mode === 'url' ? (src.url ? `custom URL` : 'custom URL') : 'default (GitHub Releases)';
+  $('#apkSource').textContent = `Source: ${label}` + (src.mode === 'url' && src.url ? ` · ${src.url}` : '');
+}
+```
+
+Hmm but the source line should also show the URL. Let me keep it simple. Also need to fill the URL input with current url when mode is 'url'.
+
+Now wire the buttons in start() (after showApk):
+
+```js
+$('#apkSetUrl').onclick = async () => {
+  const url = $('#apkUrl').value.trim();
+  if (!url) { toast('Enter a URL first'); return; }
+  $('#apkSetUrl').disabled = true;
+  const r = await api('PUT', '/api/admin/app/source', { mode: 'url', url }).catch((e) => { toast(e.message, 5000); return {}; });
+  $('#apkSetUrl').disabled = false;
+  if (r.apk !== undefined) { showApk(r); toast(r.apk ? 'APK source updated' : 'Source saved (no APK found at that URL yet)'); }
+};
+$('#apkReset').onclick = async () => {
+  $('#apkReset').disabled = true;
+  const r = await api('PUT', '/api/admin/app/source', { mode: 'default' }).catch((e) => { toast(e.message, 5000); return {}; });
+  $('#apkReset').disabled = false;
+  if (r.apk !== undefined) { showApk(r); $('#apkUrl').value = ''; toast('APK source reset to default'); }
+};
+$('#apkUpload').onclick = () => $('#apkFile').click();
+$('#apkFile').onchange = async () => {
+  const f = $('#apkFile').files[0];
+  $('#apkFile').value = '';
+  if (!f) return;
+  try {
+    const r = await fetch('/api/admin/app/upload', { method: 'POST', body: f, headers: { 'x-filename': f.name }, credentials: 'same-origin' });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Upload failed');
+    showApk(d); toast(`Uploaded ${d.apk.name}`);
+  } catch (e) { toast(e.message, 5000); }
+};
+```
+
+Wait, the `api` helper — let me check what it supports (PUT?). The admin.html uses `api('PUT', ...)` elsewhere? Let me check common.js. Actually there's `api('PUT', '/api/admin/background'...)`? No, adminBgCard uses raw fetch for PUT. Let me check common.js to see if `api` supports PUT/PATCH/DELETE methods.
+
+From usage in admin.html: `api('PATCH', ...)`, `api('DELETE', ...)`, `api('POST', ...)`, `api('GET', ...)`. So `api` supports arbitrary methods. And `api('PUT', '/api/admin/events/:id/photos/:photo/thumb/:size', ...)` is used in makeMissingThumbs. So api supports PUT. Good.
+
+Let me verify `api` signature. Let me read common.js quickly to confirm api(method, url, body) returns parsed json and throws with e.message/e.status.
+
+Let me check the common.js file.
+
+Actually, I should verify `api` and `toast` signatures. Let me read common.js.
+
+Also need to check: the `api` helper — when response is 200 with JSON, returns parsed body. When error, throws with `.message` and `.status`. Let me confirm by reading.
+
+Let me read the public/js/common.js.
+dsh: reasoning:
+`api` supports arbitrary methods and body JSON. For upload (raw body with x-filename header), I need raw fetch since `api` always sets content-type json for non-Blob body. I'll use raw fetch for upload (as I planned). Good.
+
+Now let me write the code. First apk.js.
+
+Let me also double-check: the test imports `../src/server.js`, which imports api.js which imports apk.js. The test also does `const db = await import('../src/db.js'); const storage = await import('../src/storage.js');`. I can add `const apk = await import('../src/apk.js');` to access getSource/setSource if needed for tests. Actually I may not need it; I can manipulate the source file directly via fs. But importing apk gives me access to refreshApk, getSource etc. But api.js routes already exercise these. I'll write the source file via fs to control mode precisely, and use API routes to trigger refresh/upload/reset.
+
+Actually, let me reconsider the test design more concretely, to make sure it passes and is deterministic.
+
+Test environment:
+- aux server at `http://127.0.0.1:PORT` serves:
+  - `/certs` → JWK
+  - `/releases` → GitHub releases JSON with tag 'jstether-v4.0', asset id 7, name 'JSTether-v4.0.apk', browser_download_url `${auxUrl}/apk`
+  - `/apk` → Buffer 'PK' + 3000 zero bytes (length 3002)
+  - `/check`, `/faces` → moderator stuff
+
+- env APK_RELEASES_URL = `${auxUrl}/releases`.
+
+Existing test `APK download only after login`:
+- `A('POST', '/api/admin/app/refresh')` → version '4.0' (default mode fetches /releases, downloads /apk).
+- downloads via app.apk.
+
+Now my new tests must be inserted somewhere. Order matters because state (source file, uploaded apk) persists across tests. Let me place new tests AFTER the existing "APK download only after login" test, but BEFORE tests that don't care. Actually the tests run sequentially. The existing APK test refreshes default and downloads. If I then change source, subsequent tests might be affected? Let me check: no other test depends on the APK after the APK test. The APK test is test #5 (after photographer). Then organiser panel, settings, download-all, scanner, pages. None use APK. But the "reset default restores" test should restore default at the end, so the final state is default. Also the scanner test and others don't touch APK.
+
+But wait — there's a subtlety: my new tests will change the APK (upload, custom URL), and if they don't restore properly, could affect... nothing else. But to be safe, end with reset default and refresh to restore default APK (version 4.0).
+
+Let me design the new test block(s). I'll add them right after the existing APK test.
+
+Test 1: "admin APK source: reject unsafe URLs, accept upload, survive refresh, reset default"
+
+Let me write it as one or two tests.
+
+```js
+test('admin APK source: custom URL, SSRF guard, upload, reset', async () => {
+  // SSRF / validation rejections
+  assert.equal((await A('PUT', '/api/admin/app/source', { body: { mode: 'url', url: 'http://127.0.0.1/app.apk' } })).status, 400);
+  assert.equal((await A('PUT', '/api/admin/app/source', { body: { mode: 'url', url: 'http://example.com/app.apk' } })).status, 400);
+  assert.equal((await A('PUT', '/api/admin/app/source', { body: { mode: 'url', url: 'https://127.0.0.1/app.apk' } })).status, 400);
+  assert.equal((await A('PUT', '/api/admin/app/source', { body: { mode: 'url', url: 'https://localhost/app.apk' } })).status, 400);
+  assert.equal((await A('PUT', '/api/admin/app/source', { body: { mode: 'nope' } })).status, 400);
+
+  // custom direct .apk URL (write the source file directly, since the API requires https and the mock is http)
+  const appDir = path.join(process.env.DATA_DIR, 'app');
+  fs.mkdirSync(appDir, { recursive: true });
+  fs.writeFileSync(path.join(appDir, 'apk-source.json'), JSON.stringify({ mode: 'url', url: `${auxUrl}/apk`, updatedAt: Date.now() }));
+  let r = await A('POST', '/api/admin/app/refresh');
+  assert.equal(r.status, 200);
+  assert.equal(r.body.source.mode, 'url');
+  const dl = await A('GET', '/api/admin/app.apk');
+  assert.equal(dl.status, 200);
+  assert.equal(dl.body[0], 0x50); assert.equal(dl.body[1], 0x4b); assert.equal(dl.body.length, 3002);
+
+  // non-PK upload rejected
+  const bad = await A('POST', '/api/admin/app/upload', { raw: Buffer.concat([Buffer.from('MZ'), Buffer.alloc(3000)]), headers: { 'x-filename': 'x.apk' } });
+  assert.equal(bad.status, 415);
+
+  // valid PK upload ok, mode becomes upload, survives refresh (not overwritten)
+  const up = await A('POST', '/api/admin/app/upload', { raw: Buffer.concat([Buffer.from('PK'), Buffer.alloc(5000)]), headers: { 'x-filename': 'MyUpload.apk' } });
+  assert.equal(up.status, 200);
+  assert.equal(up.body.apk.name, 'MyUpload.apk');
+  assert.equal(up.body.source.mode, 'upload');
+  const refresh = await A('POST', '/api/admin/app/refresh');
+  assert.equal(refresh.body.apk.name, 'MyUpload.apk'); // upload survives sync
+  assert.equal(refresh.body.source.mode, 'upload');
+
+  // reset default restores the GitHub-releases APK from config
+  const rst = await A('PUT', '/api/admin/app/source', { body: { mode: 'default' } });
+  assert.equal(rst.status, 200);
+  assert.equal(rst.body.source.mode, 'default');
+  assert.equal(rst.body.apk.name, 'JSTether-v4.0.apk');
+});
+```
+
+Wait, some issues:
+
+1. `A('PUT', '/api/admin/app/source', { body: { mode: 'url', url: 'http://127.0.0.1/app.apk' } })` — the device() call: `if (body !== undefined) h['content-type'] = 'application/json'`. So content-type json set. readJson parses. Good. Returns 400. Good.
+
+2. For the direct .apk custom URL, I write apk-source.json with mode 'url' and url `${auxUrl}/apk` (http://127.0.0.1/apk). Then POST /app/refresh → refreshApk reads source → mode url → refreshFromUrl → classify: ends with `.apk` → direct download from auxUrl/apk → 'PK'+3000 zeros = 3002 bytes. Validate PK ok. saveApk with file 'apk' sanitized... wait, `new URL(auxUrl + '/apk').pathname` = '/apk', basename = 'apk'. sanitize('apk') = 'apk' (no extension). Hmm, the file would be named 'apk' without .apk extension. That's fine for storage but the name in meta = 'apk'. The apkJson name = 'apk'. Test asserts dl.body length 3002 and PK magic. Fine.
+
+But wait, `sanitize('apk')` — `String(name).replace(/[^\w.-]/g,'_')` on 'apk' = 'apk'. OK.
+
+Actually, hmm, the direct .apk URL classification regex: `/\.apk(?:[?#].*)?$/i.test(u)` where u = `http://127.0.0.1:PORT/apk`. Does it end with `.apk`? 'apk' has no dot before it. `/apk` → the regex looks for `.apk` literally (dot + apk). The path is `/apk` which is `apk` not `.apk`. So the regex would NOT match! It would fall through to releasesApiUrl → returns u as-is → refreshFromReleases(auxUrl+'/apk') → fetch /apk returns PK buffer → r.json() throws (not JSON). Error caught → apkInfo() returns old (or null).
+
+So I need the test's direct .apk URL to actually end in `.apk`. Let me make the aux server also serve `/direct.apk`. Actually, the aux server currently serves `/apk` (used as browser_download_url for the releases asset). The path `/apk` doesn't end in `.apk`. 
+
+Options:
+- Add a new route to aux server: `/file.apk` → serve PK buffer. But I can only modify the test file (which IS the aux server). I can add `if (req.url === '/file.apk') return res.end(...)`.
+
+Actually, I'm modifying the test file anyway, so I can add the route. Let me add to the aux server: `if (req.url === '/file.apk') return res.end(Buffer.concat([Buffer.from('PK'), Buffer.alloc(3000)]));`
+
+But wait — can I modify the aux server? The aux server is defined in api.test.js which I'm allowed to modify. Yes.
+
+Actually, even simpler: the existing `/apk` route serves the PK buffer. I can add a `/direct.apk` route. Or change `/apk` handling. But `/apk` is used by the releases asset browser_download_url, so I shouldn't change it. Add `/direct.apk`.
+
+So test writes source url `${auxUrl}/direct.apk`. Then refresh → direct download → file 'direct.apk', length 3002.
+
+3. Non-PK upload: raw = 'MZ' + 3000. x-filename 'x.apk'. api.js checks filename ends .apk (ok), then PK magic check fails → 415. Good. Actually wait, I also validate PK in saveUploadedApk. But api.js checks first. Either way 415. Good.
+
+Actually, should the non-PK rejection also test a non-.apk filename? The spec says "upload non-PK rejected". I'll test both maybe. But keep it: non-PK body with .apk filename → 415. That's the "upload non-PK rejected" test.
+
+4. Valid PK upload: raw = 'PK' + 5000 zeros. x-filename 'MyUpload.apk'. api.js: filename ends .apk ok, PK ok, saveUploadedApk → meta name 'MyUpload.apk', source 'upload', setSource upload. Response `{apk: apkJson(m), source: getSource()}`. apkJson(m) → {name:'MyUpload.apk', version:'upload', size:5002, tag:null, published:null}. Hmm wait, `apkJson` returns `{ name: m.name, version: m.version, size: m.size, tag: m.tag, published: m.published }`. version = 'upload' (fallback). size 5002. Test asserts up.body.apk.name === 'MyUpload.apk'. Good. source.mode === 'upload'. Good.
+
+Then refresh → refreshApk sees mode upload → returns apkInfo() = the uploaded meta. `r.body.apk.name` = 'MyUpload.apk'. Good.
+
+5. Reset default: PUT source {mode:'default'} → setSource({mode:'default'}) → refreshApk → mode default → config.apkReleasesUrl = auxUrl/releases → fetch releases → pick asset → download /apk → 'PK'+3000 → name 'JSTether-v4.0.apk'. id = 'jstether-v4.0:7:x'. But wait — the earlier default refresh (existing test) already downloaded this and set meta id. Now after upload, meta id = 'upload:...'. So refreshFromReleases reads cur (uploaded meta), computes id 'jstether-v4.0:7:x', cur.id !== id, so re-downloads. Good. name = 'JSTether-v4.0.apk'. source 'default'.
+
+But there's the old file cleanup: cur.file = 'MyUpload.apk', new file = 'JSTether-v4.0.apk', so rm 'MyUpload.apk'. Good.
+
+rst.body.apk.name === 'JSTether-v4.0.apk'. Good.
+
+But wait — order of tests matters. My new test runs AFTER the existing APK test. In the existing APK test, default refresh already ran and meta id = 'jstether-v4.0:7:x'. So at start of my test, apkInfo() returns JSTether-v4.0.apk.
+
+In my test, I write source file mode 'url' url direct.apk, then refresh → downloads direct.apk, meta id 'direct:...', file 'direct.apk', source 'url'. Old file JSTether-v4.0.apk removed. Good.
+
+Then upload → MyUpload.apk, old 'direct.apk' removed. Good.
+
+Then reset → JSTether-v4.0.apk again, 'MyUpload.apk' removed. Good. Final state default, matching original.
+
+Now, one concern: my test writes `apk-source.json` directly. After the test, source mode = 'default' (from reset). But I wrote the source file manually with updatedAt; then upload setSource overwrites with mode upload; then reset overwrites with mode default. So final source file = {mode:'default', updatedAt}. getSource returns {mode:'default', url: undefined, updatedAt: ...}. Fine. No leftover custom URL.
+
+Actually, there's a subtle thing: after my test writes the source file directly with `{mode:'url', url: auxUrl+'/direct.apk'}`, then later `setSource({mode:'default'})` writes `{mode:'default', url: undefined, updatedAt}`. JSON.stringify omits `url` (undefined) → file has {mode, updatedAt}. Good.
+
+Now, another concern: The reset default PUT handler returns `{apk, source}`. But if refreshApk fails (network), apk is null. But config.apkReleasesUrl is the mock, so it works. Good.
+
+Let me also verify: does PUT /app/source with mode 'default' call refreshApk which may be `busy`? Not busy at that point. Good.
+
+6. The `assert.equal((await A('PUT', '/api/admin/app/source', { body: { mode: 'nope' } })).status, 400)` — api.js fails 400 for unknown mode. Good.
+
+Now, also I should verify: is there any issue with the test's `device()` for PUT with body? The device call sets content-type json for body. readJson limit 64KB, fine.
+
+Now, one more: the SSRF validation for `http://127.0.0.1/app.apk`: protocol http → fail "Only https". 400. Good (test says "reject http://127.0.0.1" — that's http+private, rejected for http). And `http://example.com/app.apk` → 400 non-https. `https://127.0.0.1/app.apk` → https, hostname 127.0.0.1, isPrivateIp → 400. `https://localhost/app.apk` → hostname localhost → 400.
+
+Now let me also add a test for github repo URL acceptance? The spec test bullets don't strictly require it in the test, but acceptance A2 does. I could add a test that PUT accepts `https://github.com/RafieRosliputra/a7rii-android-push` (status 200, source persisted) — but refresh would hit real api.github.com (15s timeout, real network). That would make the test slow/flaky and require network.
+
+Better: unit-test the URL conversion. Export a helper from apk.js. Let me export `releasesUrlFor(url)` or keep it internal and test via the API using a trick. Hmm.
+
+Actually, I can test github repo URL conversion WITHOUT network by pointing... no.
+
+Let me export a small pure helper `sourceUrlKind` or `releasesApiUrl` from apk.js, and unit-test it directly in the test file by importing apk.js. This is clean, deterministic, and no network.
+
+I'll export `releasesApiUrl(url)` (pure function) from apk.js. Then test:
+```js
+const apk = await import('../src/apk.js');
+assert.equal(apk.releasesApiUrl('https://github.com/o/r'), 'https://api.github.com/repos/o/r/releases?per_page=10');
+assert.equal(apk.releasesApiUrl('https://github.com/o/r/'), 'https://api.github.com/repos/o/r/releases?per_page=10');
+assert.equal(apk.releasesApiUrl('https://api.github.com/repos/o/r/releases'), 'https://api.github.com/repos/o/r/releases');
+```
+
+But is exporting an extra function acceptable? The spec says apk.js should export setSource, getSource, saveUploadedApk. Adding releasesApiUrl is a minor extra export; harmless. But the RULES say "Keep the change scoped". Adding one pure helper export is fine and aids testing. Alternatively, I can test acceptance via the API's PUT (which persists source without network if I... no, PUT triggers refresh).
+
+Hmm, actually, wait. Let me reconsider: does PUT /app/source with a github repo URL actually cause a blocking 15s network call in the test? If I add such a test, yes. I'll avoid it. Instead:
+
+Option: Test github repo URL acceptance via PUT, but make the URL point to a repo that... no, github.com always real.
+
+I'll go with: test the URL validation (rejections) via API, test direct .apk + releases-API custom URL + upload + reset via API/source-file, and unit-test `releasesApiUrl` conversion by importing apk.js. This covers A2 adequately (the acceptance is about server behavior; conversion is the key logic, and direct .apk + releases API are tested end-to-end via the custom URL path).
+
+Wait, actually, for "releases api URL" acceptance (A2), my test writes source with `auxUrl/releases`? That's a releases API URL (well, the mock serves the same JSON shape). Let me add a test step: write source `{mode:'url', url: auxUrl+'/releases'}` → refresh → assert version 4.0. That tests the releases-API custom URL path end-to-end. 
+
+Actually I already have the "direct .apk" path. Let me add the releases path too, to be thorough. But keep it concise. Let me structure the test to cover both.
+
+Let me finalize the test:
+
+```js
+test('admin APK source: SSRF guard, custom URL, upload, reset', async () => {
+  const appDir = path.join(process.env.DATA_DIR, 'app');
+  fs.mkdirSync(appDir, { recursive: true });
+
+  // reject non-https and private/local addresses
+  for (const url of ['http://127.0.0.1/app.apk', 'http://example.com/app.apk', 'https://127.0.0.1/app.apk', 'https://localhost/app.apk', 'https://192.168.1.10/app.apk']) {
+    assert.equal((await A('PUT', '/api/admin/app/source', { body: { mode: 'url', url } })).status, 400, url);
+  }
+  assert.equal((await A('PUT', '/api/admin/app/source', { body: { mode: 'nope' } })).status, 400);
+
+  // custom URL = direct .apk (write the source file directly: the mock is http, the API only takes https)
+  fs.writeFileSync(path.join(appDir, 'apk-source.json'), JSON.stringify({ mode: 'url', url: `${auxUrl}/direct.apk`, updatedAt: Date.now() }));
+  let r = await A('POST', '/api/admin/app/refresh');
+  assert.equal(r.body.source.mode, 'url');
+  let dl = await A('GET', '/api/admin/app.apk');
+  assert.equal(dl.status, 200); assert.equal(dl.body[0], 0x50); assert.equal(dl.body[1], 0x4b); assert.equal(dl.body.length, 3002);
+
+  // custom URL = GitHub releases API (mock serves the same JSON)
+  fs.writeFileSync(path.join(appDir, 'apk-source.json'), JSON.stringify({ mode: 'url', url: `${auxUrl}/releases`, updatedAt: Date.now() }));
+  r = await A('POST', '/api/admin/app/refresh');
+  assert.equal(r.body.apk.version, '4.0');
+
+  // non-APK upload rejected
+  assert.equal((await A('POST', '/api/admin/app/upload', { raw: Buffer.concat([Buffer.from('MZ'), Buffer.alloc(3000)]), headers: { 'x-filename': 'x.apk' } })).status, 415);
+  assert.equal((await A('POST', '/api/admin/app/upload', { raw: Buffer.concat([Buffer.from('PK'), Buffer.alloc(3000)]), headers: { 'x-filename': 'x.txt' } })).status, 415);
+
+  // valid upload ok, mode = upload, survives refresh
+  const up = await A('POST', '/api/admin/app/upload', { raw: Buffer.concat([Buffer.from('PK'), Buffer.alloc(5000)]), headers: { 'x-filename': 'MyUpload.apk' } });
+  assert.equal(up.status, 200); assert.equal(up.body.apk.name, 'MyUpload.apk'); assert.equal(up.body.source.mode, 'upload');
+  r = await A('POST', '/api/admin/app/refresh');
+  assert.equal(r.body.apk.name, 'MyUpload.apk'); assert.equal(r.body.source.mode, 'upload');
+
+  // reset to default restores the GitHub-releases APK from config
+  const rst = await A('PUT', '/api/admin/app/source', { body: { mode: 'default' } });
+  assert.equal(rst.status, 200); assert.equal(rst.body.source.mode, 'default'); assert.equal(rst.body.apk.name, 'JSTether-v4.0.apk');
+});
+```
+
+And a separate tiny unit test for the conversion (optional). Actually, let me fold the conversion assertion into the same file but a separate test, importing apk.js. But importing apk.js at top-level requires the env to be set before import (config.js reads env at import time). The test sets env at module top (before `await import('../src/server.js')`). apk.js imports config.js. If I import apk.js after server.js import, config is already loaded with the test env. So `const apkMod = await import('../src/apk.js');` after server import works.
+
+But careful: `releasesApiUrl` is a pure function, doesn't need config. But importing apk.js runs config.js import (already cached). Fine.
+
+Let me add:
+```js
+const apk = await import('../src/apk.js');
+```
+near the other imports (after server import). Then in a test or inline:
+```js
+assert.equal(apk.releasesApiUrl('https://github.com/owner/repo'), 'https://api.github.com/repos/owner/repo/releases?per_page=10');
+assert.equal(apk.releasesApiUrl('https://github.com/owner/repo/'), 'https://api.github.com/repos/owner/repo/releases?per_page=10');
+assert.equal(apk.releasesApiUrl('https://api.github.com/repos/o/r/releases?per_page=10'), 'https://api.github.com/repos/o/r/releases?per_page=10');
+```
+
+I'll put this in the new test block as assertions (or a separate test). I'll add it inside the new test as the first few assertions, since apk is imported at top.
+
+Hmm, but `releasesApiUrl` — I need to make sure it handles the exact URL. For `https://github.com/owner/repo`, regex `^https:\/\/github\.com\/([^/]+)\/([^/#?]+)\/?$`. owner = 'owner', repo = 'repo'. Good.
+
+Now let me also reconsider: is exporting `releasesApiUrl` necessary, or can I keep the conversion logic testable differently? I'll export it. It's a small pure helper, reasonable.
+
+Actually, let me reconsider whether I even want to name it `releasesApiUrl`. It converts a GitHub repo URL to releases API URL, or passes through. Fine.
+
+Now, let me also handle a potential issue: in `refreshFromUrl`, I test `/\.apk(?:[?#].*)?$/i.test(u)`. For `http://127.0.0.1:PORT/direct.apk`, this matches. For `http://127.0.0.1:PORT/releases`, no match → releasesApiUrl → not github → returns as-is → refreshFromReleases with the /releases URL. Good.
+
+Now, the aux server needs a `/direct.apk` route. Let me add it.
+
+Let me now also think about whether the test's direct write to apk-source.json and then POST /app/refresh could race with the `startApkSync`? In tests, server is created via `http.createServer(handler)`, NOT via `start()`. So `startApkSync` is never called. Only manual refresh via API. Good — no background sync interfering.
+
+Now let me write everything.
+
+Let me first write apk.js fully (rewrite).
+
+Let me be careful about the `apkInfo()` function — it reads metaFile, checks file exists. Keep as-is.
+
+Let me write the new apk.js.
+
+Actually, I realize I should double check: does `refreshFromReleases` return `apkInfo()` when no pick found? Original returned `apkInfo()` (not null). My refactor: `if (!pick) return apkInfo();`. And refreshApk does `return meta || apkInfo()`. If refreshFromReleases returns apkInfo() (truthy), then `meta || apkInfo()` returns that. Fine. But if apkInfo() is null, returns null → refreshApk returns null. Then api.js `apkJson(null)` = null. Fine.
+
+Let me keep refreshFromReleases returning apkInfo() when no pick, consistent with original.
+
+Now writing apk.js.
+
+Let me carefully compose the whole file.
+
+```js
+// JS Tether APK for signed-in photographers and admins.
+// The server keeps a copy of the newest APK from the GitHub Releases of the app repo
+// (public, no token needed), checked at start and every 6 hours.
+// The admin decides where this APK comes from (dataDir/app/apk-source.json):
+//   default = env/config.apkReleasesUrl (GitHub Releases), unchanged behaviour
+//   url     = a GitHub releases API URL, a GitHub repo URL, or a direct https .apk URL
+//   upload  = a file uploaded by the admin (never overwritten by auto-sync)
+import fs from 'node:fs';
+import path from 'node:path';
+import { config } from './config.js';
+
+const dir = () => path.join(config.dataDir, 'app');
+const metaFile = () => path.join(dir(), 'apk.json');
+const sourceFile = () => path.join(dir(), 'apk-source.json');
+const MODES = ['default', 'url', 'upload'];
+
+const sanitize = (name) => String(name || '').replace(/[^\w.-]/g, '_') || 'app.apk';
+
+export function getSource() {
+  try {
+    const s = JSON.parse(fs.readFileSync(sourceFile(), 'utf8'));
+    if (MODES.includes(s.mode)) return { mode: s.mode, url: s.url || undefined, updatedAt: s.updatedAt || null };
+  } catch { /* none yet */ }
+  return { mode: 'default' };
+}
+
+export function setSource(obj) {
+  const mode = MODES.includes(obj?.mode) ? obj.mode : 'default';
+  const s = { mode, url: mode === 'url' ? String(obj.url || '') : undefined, updatedAt: Date.now() };
+  fs.mkdirSync(dir(), { recursive: true });
+  fs.writeFileSync(sourceFile(), JSON.stringify(s, null, 2));
+  return s;
+}
+
+// GitHub repo URL -> its releases API URL; other URLs pass through unchanged.
+export function releasesApiUrl(u) {
+  const m = String(u || '').match(/^https:\/\/github\.com\/([^/]+)\/([^/#?]+)\/?$/);
+  return m ? `https://api.github.com/repos/${m[1]}/${m[2]}/releases?per_page=10` : String(u || '');
+}
+
+export function apkInfo() {
+  try {
+    const m = JSON.parse(fs.readFileSync(metaFile(), 'utf8'));
+    if (fs.existsSync(path.join(dir(), m.file))) return m;
+  } catch { /* none yet */ }
+  return null;
+}
+export const apkPath = (m) => path.join(dir(), m.file);
+
+function validApk(buf) {
+  return !!buf && buf.length >= 1000 && buf[0] === 0x50 && buf[1] === 0x4b; // zip "PK"
+}
+
+// Atomic write + old file cleanup + meta. Reads cur BEFORE writing the new meta so cleanup works.
+function saveApk(buf, file, fields) {
+  fs.mkdirSync(dir(), { recursive: true });
+  const cur = apkInfo();
+  fs.writeFileSync(path.join(dir(), file + '.tmp'), buf);
+  fs.renameSync(path.join(dir(), file + '.tmp'), path.join(dir(), file));
+  const meta = { ...fields, file, size: buf.length, fetchedAt: Date.now() };
+  fs.writeFileSync(metaFile(), JSON.stringify(meta, null, 2));
+  if (cur && cur.file !== file) fs.rmSync(path.join(dir(), cur.file), { force: true });
+  console.log(`[apk] ${meta.name}${meta.tag ? ` (${meta.tag})` : ''} saved`);
+  return meta;
+}
+
+async function refreshFromReleases(apiUrl, source = 'default') {
+  const r = await fetch(apiUrl, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'livephoto' }, signal: AbortSignal.timeout(15000) });
+  if (!r.ok) throw new Error(`releases ${r.status}`);
+  const releases = await r.json();
+  let pick = null;
+  for (const rel of releases) {
+    if (rel.draft) continue;
+    const asset = (rel.assets || []).find((a) => /\.apk$/i.test(a.name));
+    if (asset) { pick = { rel, asset }; break; }
+  }
+  if (!pick) return apkInfo();
+  const cur = apkInfo();
+  const id = `${pick.rel.tag_name}:${pick.asset.id}:${pick.asset.updated_at || ''}`;
+  if (cur && cur.id === id) return cur;
+  const dl = await fetch(pick.asset.browser_download_url, { signal: AbortSignal.timeout(120000) });
+  if (!dl.ok) throw new Error(`download ${dl.status}`);
+  const buf = Buffer.from(await dl.arrayBuffer());
+  if (!validApk(buf)) throw new Error('not an APK');
+  const file = sanitize(pick.asset.name);
+  return saveApk(buf, file, { id, name: pick.asset.name, tag: pick.rel.tag_name, title: pick.rel.name || pick.rel.tag_name,
+    version: (pick.asset.name.match(/v?(\d+(?:\.\d+)+)/) || [])[1] || pick.rel.tag_name, published: pick.rel.published_at, source });
+}
+
+async function refreshFromDirectApk(u) {
+  const id = `direct:${u}`;
+  const cur = apkInfo();
+  if (cur && cur.id === id) return cur; // direct URL: download once
+  const r = await fetch(u, { signal: AbortSignal.timeout(120000) });
+  if (!r.ok) throw new Error(`download ${r.status}`);
+  const buf = Buffer.from(await r.arrayBuffer());
+  if (!validApk(buf)) throw new Error('not an APK');
+  let name = 'app.apk';
+  try { name = path.posix.basename(new URL(u).pathname) || 'app.apk'; } catch { /* keep */ }
+  const file = sanitize(name);
+  return saveApk(buf, file, { id, name, tag: null, title: name,
+    version: (name.match(/v?(\d+(?:\.\d+)+)/) || [])[1] || 'custom', published: null, source: 'url' });
+}
+
+async function refreshFromUrl(u) {
+  if (/\.apk(?:[?#].*)?$/i.test(u)) return refreshFromDirectApk(u);
+  return refreshFromReleases(releasesApiUrl(u), 'url');
+}
+
+let busy = false;
+export async function refreshApk() {
+  if (busy) return apkInfo();
+  const src = getSource();
+  if (src.mode === 'upload') return apkInfo(); // manual upload: sync must never overwrite it
+  if (src.mode === 'default' && !config.apkReleasesUrl) return apkInfo();
+  busy = true;
+  try {
+    const meta = src.mode === 'default' ? await refreshFromReleases(config.apkReleasesUrl) : await refreshFromUrl(src.url);
+    return meta || apkInfo();
+  } catch (e) {
+    console.error('[apk]', e.message);
+    return apkInfo();
+  } finally { busy = false; }
+}
+
+// Admin manual upload: validate and store as the active APK (mode becomes 'upload').
+export function saveUploadedApk(buf, filename) {
+  if (!validApk(buf)) throw new Error('not an APK');
+  const name = sanitize(filename);
+  fs.mkdirSync(dir(), { recursive: true });
+  const cur = apkInfo();
+  fs.writeFileSync(path.join(dir(), name + '.tmp'), buf);
+  fs.renameSync(path.join(dir(), name + '.tmp'), path.join(dir(), name));
+  const meta = { id: `upload:${Date.now()}`, file: name, name, tag: null, title: name,
+    version: (name.match(/v?(\d+(?:\.\d+)+)/) || [])[1] || 'upload', published: null, source: 'upload', fetchedAt: Date.now() };
+  fs.writeFileSync(metaFile(), JSON.stringify(meta, null, 2));
+  if (cur && cur.file !== name) fs.rmSync(path.join(dir(), cur.file), { force: true });
+  setSource({ mode: 'upload' });
+  console.log(`[apk] uploaded ${meta.name}`);
+  return meta;
+}
+
+let timer;
+export function startApkSync() {
+  refreshApk();
+  timer = setInterval(refreshApk, 6 * 3600e3);
+  timer.unref();
+}
+export const stopApkSync = () => clearInterval(timer);
+
+export function sendApk(req, res, m) {
+  const st = fs.statSync(apkPath(m));
+  res.writeHead(200, {
+    'content-type': 'application/vnd.android.package-archive', 'content-length': st.size,
+    'content-disposition': `attachment; filename="${m.name}"`, 'cache-control': 'private, no-store',
+  });
+  if (req.method === 'HEAD') return res.end();
+  fs.createReadStream(apkPath(m)).pipe(res);
+}
+```
+
+Wait, there's a subtle bug: in `refreshFromReleases`, I read `const cur = apkInfo();` then `if (cur && cur.id === id) return cur;` BEFORE downloading. But `saveApk` also reads `cur = apkInfo()` again (after download) for cleanup. That's fine — double read. But in the original, `cur` was read once before download and used both for the id short-circuit AND cleanup. Now I read twice. In saveApk, `cur` is read after the download, which is fine for cleanup (it's still the OLD meta since we haven't written meta yet). Good.
+
+Actually wait — in saveApk I read `cur = apkInfo()` then write tmp, rename, write meta, cleanup. The `cur` is the old meta. Correct.
+
+But there's a redundancy: refreshFromReleases reads cur for id short-circuit, then saveApk reads cur again. Harmless.
+
+Now `sendApk` uses `m.name` for content-disposition. For direct apk name 'direct.apk' → fine. For upload 'MyUpload.apk' → fine.
+
+Now the `version` for direct apk: name 'direct.apk', regex `/v?(\d+(?:\.\d+)+)/` on 'direct.apk' → no match → 'custom'. Fine.
+
+Now api.js changes.
+
+Import line 17: `import { apkInfo, refreshApk, sendApk } from './apk.js';` → `import { apkInfo, refreshApk, sendApk, getSource, setSource, saveUploadedApk } from './apk.js';`
+
+Add `import net from 'node:net';` at top (after `import fs from 'node:fs';` etc.). Actually imports are: fs, path, config, db, auth, storage, imageinfo, live, moderation, apk, zip, http. Add net near top.
+
+Add SSRF helper near the top or near the admin section. I'll add it near the admin section (before the `A` helper or before app routes).
+
+Now modify the app routes:
+
+```js
+A('GET', '/app', (req, res) => sendJson(res, 200, { apk: apkJson(apkInfo()), source: getSource() }));
+A('POST', '/app/refresh', async (req, res) => { const m = await refreshApk(); sendJson(res, 200, { apk: apkJson(m), source: getSource() }); });
+A('PUT', '/app/source', async (req, res) => {
+  const body = await readJson(req);
+  if (body.mode === 'default') {
+    setSource({ mode: 'default' });
+    const m = await refreshApk();
+    return sendJson(res, 200, { apk: apkJson(m), source: getSource() });
+  }
+  if (body.mode === 'url') {
+    const url = safeUrl(String(body.url || '')).toString();
+    setSource({ mode: 'url', url });
+    const m = await refreshApk();
+    return sendJson(res, 200, { apk: apkJson(m), source: getSource() });
+  }
+  fail(400, 'Mode must be "default" or "url"');
+});
+A('POST', '/app/upload', async (req, res) => {
+  const buf = await readBody(req, 100 * 1024 * 1024);
+  const name = String(req.headers['x-filename'] || '');
+  if (!/\.apk$/i.test(name)) fail(415, 'The file must be a .apk');
+  if (buf.length < 2 || buf[0] !== 0x50 || buf[1] !== 0x4b) fail(415, 'Not a valid APK (PK signature)');
+  const m = saveUploadedApk(buf, name);
+  sendJson(res, 200, { apk: apkJson(m), source: getSource() });
+});
+A('GET', '/app.apk', ...); // unchanged
+```
+
+Wait, order: currently routes are:
+```
+A('GET', '/app', ...);
+A('POST', '/app/refresh', ...);
+A('GET', '/app.apk', ...);
+```
+
+I'll replace the first two and insert new ones. Keep `/app.apk` unchanged.
+
+Now the safeUrl helper:
+
+```js
+function safeUrl(raw) {
+  let u;
+  try { u = new URL(String(raw || '')); } catch { fail(400, 'Enter a valid URL'); }
+  if (u.protocol !== 'https:') fail(400, 'Only https:// URLs are allowed');
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) fail(400, 'Local addresses are not allowed');
+  if (net.isIP(host) && privateIp(host)) fail(400, 'Private addresses are not allowed');
+  return u;
+}
+function privateIp(host) {
+  if (net.isIP(host) === 4) {
+    const p = host.split('.').map(Number);
+    if (p[0] === 0 || p[0] === 10 || p[0] === 127) return true;
+    if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return true;
+    if (p[0] === 192 && p[1] === 168) return true;
+    if (p[0] === 169 && p[1] === 254) return true;
+    if (p[0] === 100 && p[1] >= 64 && p[1] <= 127) return true;
+    return false;
+  }
+  if (net.isIP(host) === 6) {
+    const h = host.toLowerCase();
+    if (h === '::' || h === '::1') return true;
+    if (h.startsWith('fe8') || h.startsWith('fe9') || h.startsWith('fea') || h.startsWith('feb')) return true; // fe80::/10
+    if (h.startsWith('fc') || h.startsWith('fd')) return true; // fc00::/7
+    if (h.startsWith('ff')) return true; // multicast
+    return false;
+  }
+  return false;
+}
+```
+
+Note: `host.startsWith('fe8')` catches fe80 through feb... actually 'fea','feb','fec','fed','fee','fef' all start with 'fe'. fe80::/10 = fe80–febf. So checking startsWith('fe8')||startsWith('fe9')||startsWith('fea')||startsWith('feb') covers fe8, fe9, fea, feb prefixes. Good enough.
+
+Now, does `new URL('https://localhost/app.apk').hostname` return 'localhost'? Yes. `.replace(/^\[|\]$/g,'')` leaves 'localhost'. Good.
+
+`new URL('https://127.0.0.1/app.apk').hostname` → '127.0.0.1'. net.isIP → 4, privateIp → true (127). Good.
+
+`new URL('https://[::1]/x').hostname` → Node returns '[::1]'? Let me verify. In Node, `new URL('https://[::1]/').hostname` returns `[::1]`. Actually I recall it returns `[::1]` with brackets. My replace strips brackets → '::1'. net.isIP('::1') → 6. Good.
+
+Now, I need `net` imported. Add `import net from 'node:net';`.
+
+Now admin.html changes.
+
+Let me write the apk card HTML and JS.
+
+HTML (replace lines 96-99):
+```html
+<div class="apkcard hidden" id="apkCard">
+  <div><b>JS Tether app</b> <span class="small muted" id="apkVer"></span></div>
+  <div class="small muted" id="apkSource">Source: default (GitHub Releases)</div>
+  <div class="row"><a class="btn small" href="/api/admin/app.apk" download id="apkDl">Download APK</a><button class="btn small ghost" id="apkRefresh">Check for update</button></div>
+  <div class="row"><input class="input" id="apkUrl" type="url" placeholder="https://github.com/owner/repo or a direct .apk URL" style="flex:1 1 180px;min-width:0;padding:6px 8px"><button class="btn small" id="apkSetUrl">Pautkan</button><button class="btn small ghost" id="apkReset">Reset default</button></div>
+  <div class="row"><input type="file" id="apkFile" accept=".apk,application/vnd.android.package-archive" class="hidden"><button class="btn small" id="apkUpload">Upload APK</button></div>
+</div>
+```
+
+Wait — `.hidden` class: is it defined? There's `class="btn small light hidden"` used elsewhere, and `hidden` class is used. Let me confirm `.hidden { display: none !important; }` exists in site.css. The admin.html uses `hidden` class extensively (`$('#logoutBtn').classList.remove('hidden')` etc.), so it's defined. Good.
+
+For the file input hidden: use class `hidden` so it's not visible but still clickable via button. Good.
+
+Now JS: update `showApk` and add wiring.
+
+Current start():
+```js
+showApk(await api('GET', '/api/admin/app').catch(() => ({})));
+adminBgCard();
+$('#apkRefresh').onclick = ...
+```
+
+I'll add after showApk the wiring for apkSetUrl, apkReset, apkUpload, apkFile.
+
+But note: showApk is called with the GET /app response which now includes `source`. Good.
+
+Update showApk:
+```js
+function showApk(d) {
+  $('#apkCard').classList.remove('hidden');
+  if (d && d.apk) { $('#apkVer').textContent = `${d.apk.version} · ${Math.max(1, Math.round(d.apk.size / 1024))} KB`; $('#apkDl').classList.remove('hidden'); }
+  else { $('#apkVer').textContent = 'not downloaded yet'; $('#apkDl').classList.add('hidden'); }
+  const src = (d && d.source) || { mode: 'default' };
+  const label = src.mode === 'upload' ? 'uploaded file' : src.mode === 'url' ? 'custom URL' : 'default (GitHub Releases)';
+  $('#apkSource').textContent = `Source: ${label}` + (src.mode === 'url' && src.url ? ` — ${src.url}` : '');
+  $('#apkUrl').value = src.mode === 'url' ? (src.url || '') : '';
+}
+```
+
+Then add wiring in start() after apkRefresh:
+
+```js
+$('#apkSetUrl').onclick = async () => {
+  const url = $('#apkUrl').value.trim();
+  if (!url) { toast('Enter a URL first'); return; }
+  $('#apkSetUrl').disabled = true;
+  try {
+    const r = await api('PUT', '/api/admin/app/source', { mode: 'url', url });
+    showApk(r);
+    toast(r.apk ? 'APK source updated' : 'Source saved — no APK found at that URL yet');
+  } catch (e) { toast(e.message, 5000); }
+  $('#apkSetUrl').disabled = false;
+};
+$('#apkReset').onclick = async () => {
+  $('#apkReset').disabled = true;
+  try {
+    const r = await api('PUT', '/api/admin/app/source', { mode: 'default' });
+    showApk(r);
+    toast(r.apk ? 'APK source reset to default' : 'Source reset');
+  } catch (e) { toast(e.message, 5000); }
+  $('#apkReset').disabled = false;
+};
+$('#apkUpload').onclick = () => $('#apkFile').click();
+$('#apkFile').onchange = async () => {
+  const f = $('#apkFile').files[0];
+  $('#apkFile').value = '';
+  if (!f) return;
+  try {
+    const r = await fetch('/api/admin/app/upload', { method: 'POST', body: f, headers: { 'x-filename': f.name }, credentials: 'same-origin' });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Upload failed');
+    showApk(d); toast(`Uploaded ${d.apk.name}`);
+  } catch (e) { toast(e.message, 5000); }
+};
+```
+
+Wait, the spec says "file input 'Upload APK' with progress/toast". Progress — for a raw fetch POST without tracking, I can show a simple toast. The spec says "with progress/toast". A toast is enough ("progress/toast" = toast indicating progress/completion). Since raw fetch doesn't easily give progress without XHR, I'll show a toast "Uploading…" then completion toast. Actually, let me add a simple progress using fetch is not possible easily. I'll show toast "Uploading APK…" before, then "Uploaded X" or error. That satisfies "progress/toast" loosely. Let me add a "Uploading…" toast at start.
+
+Actually, to be more faithful to "progress", I could use XHR with upload.onprogress. But that adds complexity. The spec says "progress/toast" — I'll interpret as "show progress feedback via toast". I'll do a toast before and after. Good enough, and "no new libs" satisfied.
+
+Let me refine: 
+```js
+$('#apkFile').onchange = async () => {
+  const f = $('#apkFile').files[0];
+  $('#apkFile').value = '';
+  if (!f) return;
+  toast('Uploading APK…');
+  try {
+    const r = await fetch('/api/admin/app/upload', { method: 'POST', body: f, headers: { 'x-filename': f.name }, credentials: 'same-origin' });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Upload failed');
+    showApk(d); toast(`Uploaded ${d.apk.name}`);
+  } catch (e) { toast(e.message, 5000); }
+};
+```
+
+Good.
+
+Now, one issue: `api('PUT', ...)` — the `api` helper sets content-type json when body is not Blob/ArrayBuffer. body = {mode, url} object → JSON. Good.
+
+Now, the `#apkUrl` input with `type="url"` — fine.
+
+Now let me make sure the HTML `.input` class exists (it's used throughout, e.g. `<input class="input" ...>`). Yes.
+
+Now, I need to double check the placement of the `apkSource` div and URL input within the apk card, and that CSS `.apkcard` displays them nicely. It's a flex column with gap 8px. The `.row` is flex row wrap. Fine.
+
+Now let me also reconsider: `showApk` references `$('#apkUrl')` which exists in the new HTML. Good.
+
+Let me also verify there are no other references to showApk or apk card that I'm breaking. `showApk` called in start() and in apkRefresh onclick. Also `$('#apkRefresh').onclick` uses showApk(r) where r is `{apk}` from /app/refresh which now includes source. Good.
+
+Now, there's one more: the `apkRefresh` toast message: "JS Tether ${r.apk.version} is the newest" or "No APK found". With new source modes, if mode is upload, refresh returns the uploaded apk (apkInfo), so r.apk is the uploaded apk and toast says "JS Tether <version> is the newest". Slightly misleading for upload mode, but acceptable. I could leave it. Actually, to be safe and minimal, leave apkRefresh as-is (it still works).
+
+Now let me write the files. Let me do apk.js first (full rewrite via write), then edit api.js, then edit admin.html, then edit test.
+
+For api.js, I'll use edit to make targeted changes:
+1. Add `import net from 'node:net';`
+2. Update apk import line.
+3. Add safeUrl/privateIp helpers.
+4. Replace the app routes block.
+
+Let me write the edits carefully with exact old strings.
+
+Edit 1: import net. The file starts:
+```js
+import fs from 'node:fs';
+import path from 'node:path';
+```
+Add net after path:
+```js
+import fs from 'node:fs';
+import path from 'node:path';
+import net from 'node:net';
+```
+
+Edit 2: apk import line:
+`import { apkInfo, refreshApk, sendApk } from './apk.js';`
+→
+`import { apkInfo, refreshApk, sendApk, getSource, setSource, saveUploadedApk } from './apk.js';`
+
+Edit 3: app routes block. Replace:
+```js
+A('GET', '/app', (req, res) => sendJson(res, 200, { apk: apkJson(apkInfo()) }));
+A('POST', '/app/refresh', async (req, res) => sendJson(res, 200, { apk: apkJson(await refreshApk()) }));
+```
+with new block (including PUT /app/source and POST /app/upload).
+
+And add the safeUrl/privateIp helpers somewhere. I'll add them right before the `A('GET', '/app', ...)` line. Let me put the helpers in the admin-only section. Actually cleaner to add near the apkJson definition (line 304) or before A() routes. I'll add right before line 729 `A('GET', '/app', ...)`.
+
+Let me write the helpers and routes in one edit replacing the two lines (729-730).
+
+Actually, let me structure: replace lines 729-730 (the two `A('GET','/app'...)` and `A('POST','/app/refresh'...)`) with:
+```js
+function privateIp(host) { ... }
+function safeUrl(raw) { ... }
+A('GET', '/app', ...);
+A('POST', '/app/refresh', ...);
+A('PUT', '/app/source', ...);
+A('POST', '/app/upload', ...);
+```
+
+Let me now do the edits.
+
+Let me write apk.js via write (full replacement).
+dsh: reasoning:
+Now admin.html changes. Replace the apk card HTML and update showApk + add wiring.
+
+First the HTML (lines 96-99).
+dsh: reasoning:
+Now the test file. Add `/direct.apk` route to aux server, import apk.js, add new test block.
+
+Let me edit test file.
+
+1. Add `/direct.apk` route to aux server. After line 20 (`if (req.url === '/apk') return res.end(...)`).
+
+2. Import apk.js: after `const storage = await import('../src/storage.js');` add `const apk = await import('../src/apk.js');`.
+
+3. Add new test block after the existing "APK download only after login" test (ends line 222).
+
+Let me do the edits.
+dsh: reasoning:
+Wait — my new test uses `photog` and `stranger`, which are defined at line 96 (after the top-level env/import setup). But my test is placed after the "APK download" test (line ~222), and `photog`/`stranger` are defined before all tests at line 96. So they're in scope. Good.
+
+But there's an issue: the `photog` device has a photographer session from the earlier photographer test (signed in). At the point my new test runs, is the photographer session still valid? The photographer test ran earlier and the event is still live (not closed yet — the close happens in a later test). So photog session is live. `photog('PUT', '/api/admin/app/source', ...)` → hits the `A()` wrapper → requireAdmin → no cf-access-jwt header → 401. Good. Actually wait, the A wrapper: `r(method, `/api/admin${p}`, async (req,res,ctx) => { const admin = await auth.requireAdmin(req); ... })`. requireAdmin with devAdmin empty → verifyAccessJwt with no token → 401. Good, regardless of photographer session.
+
+Now, one concern: `stranger` is `device('10.0.0.5')` — no session. `stranger('PUT', '/api/admin/app/source', {body:{mode:'default'}})` → 401. Good.
+
+Now let me run the tests.
+
+Actually wait, there's a potential issue with the ordering: my test is inserted between "APK download only after login" and "organiser panel". The "APK download" test ends with photog downloading app.apk (3002 bytes). Then my test runs. At start, apkInfo = JSTether-v4.0.apk.
+
+In my test, I first test releasesApiUrl (pure). Then SSRF rejections (no state change). Then photog/stranger 401. Then write source file mode url direct.apk, refresh → downloads direct.apk (3002). Then releases → version 4.0. Then uploads etc. Then reset default.
+
+Let me verify a subtle point: in the SSRF rejections loop, I call PUT /app/source with invalid URLs. These `fail()` before setSource, so source file unchanged (still default, or whatever was before). At this point source file doesn't exist yet (default mode, no file). getSource returns {mode:'default'}. After rejections, still default. Good.
+
+But wait — actually, is there any side effect? The `fail(400, ...)` in safeUrl happens during the handler. The A wrapper already did requireAdmin (passed). Then handler throws HttpError 400 → caught by server handler → 400 JSON. No setSource called. Good.
+
+Now, one more concern: my test does `A('PUT', '/api/admin/app/source', { body: { mode: 'url', url: 'http://127.0.0.1/app.apk' } })`. readJson parses body. Then `safeUrl('http://127.0.0.1/app.apk')` → protocol http → fail 400. Good.
+
+Let me now run npm test.
+
+Actually, let me also double-check: the `device` helper for PUT with `raw`? Not used for these. Fine.
+
+Let me run the test.
+dsh: reasoning:
+All 13 tests pass. Let me verify the git status to ensure only allowed files changed, and do a quick lint check (node syntax) on the modified files. Actually tests pass so syntax is fine.
+
+Let me verify I didn't touch any other files. Let me check git status.
+dsh: reasoning:
+Only the 4 allowed files changed (plus `.ds-worker/` untracked, which is the harness's own working dir, not something I created in the project — actually it might be created by the harness. I should not touch it. It's not one of my files. I'll leave it.)
+
+Wait, `.ds-worker/` untracked — is that within project root? It's at project root. The RULES say "Do not touch git, secrets, servers, or anything outside the project root." And "You may ONLY create/modify files matching: ...". The `.ds-worker/` is likely the harness's own scratch directory. I didn't create it. Let me verify it's not something I need to worry about. It's untracked, pre-existing from the harness. I'll leave it alone.
+
+Actually, let me just confirm I didn't accidentally create it. It's likely the harness working directory. Not my concern. I won't touch it.
+
+All tests pass. The task is complete. Let me write the final reply with NOTES section.
+
+Final reply in BM (per boot §0b), terse, with NOTES section.
+
+Let me summarize what was done briefly, in the required terse format. The instructions say "Lead reads only terse machine output: no prose, no greetings, no restating the task, no explanations unless asked." So I should keep it minimal.
+
+I'll output a concise result and NOTES.
+
+Let me write:
+
+- apk.js: source modes (apk-source.json), setSource/getSource/saveUploadedApk, releasesApiUrl, refreshApk reads source, upload survives sync, meta.source.
+- api.js: GET /app {apk,source}, PUT /app/source (https+SSRF guard), POST /app/upload (100MB, PK+x-filename), /app/refresh kept.
+- admin.html: apk card source line + URL input + Pautkan + Reset default + Upload APK.
+- tests: 13 pass.
+
+NOTES (max 3 lines).
+
+Assumptions:
+1. Direct .apk URL is "download once" — cached by `direct:<url>` id, so repeated refreshes skip re-download.
+2. Custom URL is stored verbatim; GitHub repo→API conversion happens at refresh time.
+3. .ds-worker/ untracked dir pre-existing (harness), not touched.
+
+Let me keep NOTES to 3 terse lines.

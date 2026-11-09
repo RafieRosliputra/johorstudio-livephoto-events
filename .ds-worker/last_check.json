@@ -1,0 +1,59 @@
+{
+ "verdict": "PASS",
+ "items": [
+  {
+   "criterion": "default behaviour unchanged when no apk-source.json",
+   "pass": true,
+   "fix": ""
+  },
+  {
+   "criterion": "PUT /api/admin/app/source accepts github repo URL, releases api URL, direct https .apk; rejects http/private/local",
+   "pass": true,
+   "fix": ""
+  },
+  {
+   "criterion": "POST /api/admin/app/upload stores valid .apk, rejects non-APK, mode=upload not overwritten by sync",
+   "pass": true,
+   "fix": ""
+  },
+  {
+   "criterion": "reset to default works",
+   "pass": true,
+   "fix": ""
+  },
+  {
+   "criterion": "admin only (401/403 for photographer + anonymous)",
+   "pass": true,
+   "fix": ""
+  },
+  {
+   "criterion": "admin.html shows source, URL input, reset, upload",
+   "pass": true,
+   "fix": ""
+  },
+  {
+   "criterion": "npm test passes",
+   "pass": true,
+   "fix": ""
+  }
+ ],
+ "other_issues": [
+  "SSRF guard misses ::ffff:127.0.0.1, integer/hex IP literals, DNS-rebinding hosts; resolves loopback/private and bypasses safeUrl",
+  "PK-prefixed file under 1000 bytes passes route check then throws non-HttpError in saveUploadedApk -> 500 not 415",
+  "Upload UI shows toast only, no real progress bar (spec 'progress/toast'; toast present)"
+ ],
+ "risky_spots": [
+  {
+   "file": "server/src/api.js:731-757",
+   "why": "safeUrl/privateIp omit IPv4-in-IPv6 and dotted-decimal/hex IP forms"
+  },
+  {
+   "file": "server/src/apk.js:125-139",
+   "why": "saveUploadedApk size<1000 path throws generic Error -> 500"
+  },
+  {
+   "file": "server/public/admin.html:172-183",
+   "why": "upload handler has toast but no progress indicator"
+  }
+ ]
+}

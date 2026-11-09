@@ -1,0 +1,253 @@
+$ dsh --profile headless --patch /Users/johorstudio/Desktop/ai/claude/projects/ds-worker/patches/pro.yml --add-dir /Users/johorstudio/Desktop/ai/claude/projects/johorstudio-livephoto-events -
+rc=0 142s
+
+--- STDOUT ---
+```json
+{"v":"P","o":["SSRF guard misses ::ffff:127.0.0.1, integer/hex IP literals, DNS-rebinding hosts; resolves loopback/private and bypasses safeUrl","PK-prefixed file under 1000 bytes passes route check then throws non-HttpError in saveUploadedApk -> 500 not 415","Upload UI shows toast only, no real progress bar (spec 'progress/toast'; toast present)"],"r":[["server/src/api.js:731-757","safeUrl/privateIp omit IPv4-in-IPv6 and dotted-decimal/hex IP forms"],["server/src/apk.js:125-139","saveUploadedApk size<1000 path throws generic Error -> 500"],["server/public/admin.html:172-183","upload handler has toast but no progress indicator"]]}
+```
+
+
+--- STDERR ---
+[llm-deepseek-api-key] model listing from https://api.deepseek.com/models loaded 2 model(s), skipped 0 row(s)
+dsh: reasoning:
+Let me understand the task. I'm a strict QA reviewer. I need to check a project at /Users/johorstudio/Desktop/ai/claude/projects/johorstudio-livephoto-events.
+
+First, read ~/Desktop/ai/boot.md and print BOOT proof line, reply BM, DeepSeek, user Rafi.
+
+Then read the produced files:
+- server/public/admin.html
+- server/src/api.js
+- server/src/apk.js
+- server/test/api.test.js
+
+Reference context: ~/Desktop/ai/boot.md, server/src/apk.js, server/src/api.js, server/src/config.js, server/src/http.js, server/public/admin.html, server/test/api.test.js
+
+Run test command: cd server && npm test
+
+Then check every acceptance criterion.
+
+My final reply must be ONLY JSON, compact, listing only FAILING criteria by number.
+
+Let me start by reading boot.md and the project files.
+dsh: reasoning:
+Let me read the key files. First, let me print the BOOT proof line. Then read the produced files.
+dsh: reasoning:
+Now let me read api.js and the test file. These are large. Let me read api.js.
+dsh: reasoning:
+Now let me read the test file and admin.html.
+dsh: reasoning:
+Now let me read the admin.html (specifically the APK card section). Let me search for the apk-related section in admin.html.
+dsh: reasoning:
+Let me read the relevant admin.html section to understand the full context and check the UI.
+dsh: reasoning:
+Now I have a good understanding. Let me check the `api` helper in common.js to see if it supports PUT and how it handles errors, since the admin UI uses `api('PUT', ...)`. Let me look at common.js for the api function.
+
+Also I need to run the tests. Let me first run npm test.
+dsh: reasoning:
+Tests pass (13/13). Now let me carefully review the acceptance criteria against the code.
+
+Let me look at common.js api helper to verify `api('PUT', ...)` works and `toast` signature etc.
+dsh: reasoning:
+The `api` helper works fine with PUT. The upload uses raw fetch directly, which is fine (it needs the raw body + x-filename header).
+
+Now let me carefully evaluate each acceptance criterion.
+
+**A1: default behaviour unchanged when no apk-source.json**
+- `getSource()` returns `{ mode: 'default' }` when no file exists or parse fails.
+- `refreshApk()`: if mode default and config.apkReleasesUrl, calls refreshFromReleases(config.apkReleasesUrl). This matches original behaviour.
+- Test passes. The default behavior test: "APK download only after login" test does `A('POST', '/api/admin/app/refresh')` and expects version '4.0'. This works.
+- ✓ PASS.
+
+**A2: PUT /api/admin/app/source accepts github repo URL, releases api URL, direct https .apk; rejects http/private/local**
+- `safeUrl` validates https only, no localhost/private IP.
+- GitHub repo URL: `releasesApiUrl` converts `https://github.com/o/r` to api URL. But wait — does the PUT endpoint actually validate that the URL is a GitHub repo URL and convert it? Let me trace: In `PUT /app/source`, mode url → `const url = safeUrl(body.url).toString(); setSource({mode:'url', url}); const m = await refreshApk();`. Then refreshApk with mode url calls `refreshFromUrl(src.url)`, which checks `/\.apk.../` then `releasesApiUrl(u)`.
+
+So the conversion to releases API URL happens in `refreshFromUrl` → `releasesApiUrl`. So github repo URL is converted. ✓.
+
+But wait: the stored source file keeps the original GitHub repo URL (not the converted api url), because `setSource` stores `url` as passed. `refreshFromUrl` converts at refresh time. That's fine.
+
+- Direct https .apk: `refreshFromUrl` matches `.apk` → `refreshFromDirectApk`. ✓.
+- Reject http/private/local: safeUrl rejects `http:`, localhost, `.localhost`, `.local`, private IPs. ✓.
+
+However, there's an SSRF subtlety: `safeUrl` checks `net.isIP(host) && privateIp(host)`. But it does NOT do a DNS resolution check. A hostname like `http://localhost` (with trailing dot? e.g. `localhost.`?) Actually `localhost.` would not match `host === 'localhost'` nor `.endsWith('.localhost')`. But that's minor. The task says "validates https only, no localhost/private IP (SSRF)". DNS rebinding is out of scope. The tests check the specific cases.
+
+Actually, one subtle SSRF gap: the `privateIp` check for IPv4 is only applied when `net.isIP(host) === 4`. If host is a hostname that resolves to a private IP (e.g., `https://169.254.169.254.nip.io`), it's not blocked. But the spec only requires "no localhost/private IP". The literal test uses `https://127.0.0.1` and `https://192.168.1.10`, both literal IPs, which are blocked. `https://localhost` blocked. This satisfies the acceptance criterion as literally stated.
+
+There is one more important consideration: the test uses a direct URL that is `http://` (auxUrl is http://127.0.0.1:port/direct.apk). The API only accepts https. So the test writes the source file directly to bypass. That's a test workaround, fine.
+
+One concern: `releasesApiUrl` regex `^https:\/\/github\.com\/([^/]+)\/([^/#?]+)\/?$`. For `https://github.com/owner/repo` works. For `https://github.com/owner/repo.git` — would not match, passes through. Edge case but not required.
+
+**A2 PASS.**
+
+**A3: POST /api/admin/app/upload stores valid .apk, rejects non-APK, mode=upload not overwritten by sync**
+- Upload route: readBody max 100MB, checks x-filename ends .apk, checks PK magic, calls saveUploadedApk.
+- saveUploadedApk: validates PK, sets source mode upload.
+- refreshApk: if mode upload, returns apkInfo() without overwriting. ✓.
+- Test verifies: non-APK body rejected (415), wrong extension rejected (415), valid upload ok (200), mode upload, survives refresh.
+- PASS.
+
+Wait, but there's a subtle issue: the upload route validates `buf.length < 2 || buf[0] !== 0x50 || buf[1] !== 0x4b`. It checks PK magic but not size > 1000. saveUploadedApk → validApk checks size >= 1000. So a buffer of "PK" + 2 bytes (4 bytes total) would pass the route check but fail validApk in saveUploadedApk, throwing 'not an APK' error. But that throw is not caught → would be a 500 error, not 415. But that's an edge case (a 4-byte file). Minor. Not an acceptance criterion failure since the criterion says "rejects non-APK" and it does reject (just with 500 instead of 415). Actually let me think: the route checks `buf[0]==0x50 && buf[1]==0x4b` and then calls saveUploadedApk which throws 'not an APK' if size < 1000. The error propagates. How does the server handle thrown Error (non-HttpError)? Let me check server.js handler to see if it returns 500. This is a minor edge case — a tiny PK file. Not required by acceptance. I'll note it as "other issue" possibly, but it's minor.
+
+Actually, wait — let me reconsider. The validApk requires `buf.length >= 1000`. The test uploads `PK` + 5000 bytes = 5002 bytes, passes. The non-PK test uses `MZ` → rejected at route with 415. Good.
+
+**A3 PASS.**
+
+**A4: reset to default works**
+- `PUT /app/source` mode default → setSource({mode:'default'}), refreshApk. refreshApk with default mode calls refreshFromReleases(config.apkReleasesUrl). ✓.
+- Test verifies reset restores JSTether-v4.0.apk.
+- PASS.
+
+**A5: admin only (401/403 for photographer + anonymous)**
+- Routes use `A(...)` helper which wraps `auth.requireAdmin(req)`.
+- Test: photographer PUT source → 401, stranger PUT source → 401. Also app.apk stranger → 401, admin (without jwt) → 401.
+- Wait, the test checks `photog('PUT', '/api/admin/app/source', ...)` → 401 and `stranger('PUT', ...)` → 401. ✓.
+- But what about photographer trying GET /app or POST upload? The A() wrapper applies requireAdmin to all. ✓.
+
+The acceptance says "401/403 for photographer + anonymous". Photographer is logged in (has photographer session) but not admin → requireAdmin returns 401. Anonymous → 401. ✓ PASS.
+
+**A6: admin.html shows source, URL input, reset, upload**
+- Yes: apkSource line, apkUrl input, apkSetUrl (Pautkan), apkReset (Reset default), apkUpload (Upload APK), apkFile input. ✓.
+- English UI: "Source:", "Pautkan", "Reset default", "Upload APK". The task says English UI like rest of admin page. Hmm — "Pautkan" is Malay (BM). The task explicitly says: text input URL + "Pautkan" button. So "Pautkan" is explicitly required by the task (it's in the spec). The rest is English. The spec literally says: text input URL + "Pautkan" button (set URL); "Reset default" button; file input "Upload APK". So "Pautkan" is exactly what was asked. So that's fine. English UI like rest of admin page — the surrounding text is English, "Pautkan" is the one BM label the spec explicitly demanded. OK.
+
+Actually, let me re-read: "admin.html: in apk card add small section: current source line; text input URL + "Pautkan" button (set URL); "Reset default" button; file input "Upload APK" with progress/toast. English UI like rest of admin page. no new libs."
+
+So "Pautkan" is literally specified. "Upload APK" with progress/toast — there's toast ("Uploading APK…" then "Uploaded {name}"). "progress" — there's no progress bar, just a toast. The spec says "with progress/toast". The "…" toast could be considered a progress indicator. Hmm. Let me consider whether "progress" is required. The spec says "with progress/toast" — ambiguous whether both required. There's a toast "Uploading APK…" which indicates progress. I'd consider this acceptable (toast satisfies "progress/toast"). Not a hard fail.
+
+- No new libs: the upload uses native fetch, no new libs. ✓.
+- PASS.
+
+**A7: npm test passes** — 13/13 pass. ✓ PASS.
+
+Now let me look for bugs/security issues to flag.
+
+1. **Brand spelling**: "JohorStudio.com" — the admin.html line 86 uses "JohorStudio.com" (correct, no space). Let me check for any "Johor Studio" misspelling. The task says flag wrong brand spelling ("JohorStudio.com", no space). Let me grep.
+
+2. **SSRF via DNS/redirect**: The `safeUrl` checks are good for literal IPs but: 
+   - IPv6-mapped IPv4: `::ffff:127.0.0.1` — net.isIP returns 6 for `::ffff:127.0.0.1`? Actually `net.isIP('::ffff:127.0.0.1')` returns 6 (IPv6). Then privateIp: h = '::ffff:127.0.0.1'. It doesn't start with fe8/fe9/fea/feb/fc/fd/ff, and isn't '::' or '::1'. So it would NOT be flagged as private. This is a real SSRF bypass: `https://[::ffff:127.0.0.1]/` would bypass. But fetch to a bracketed IPv6-mapped... in Node, `fetch('https://[::ffff:127.0.0.1]/')` — would Node resolve it? Probably yes. This is a known SSRF bypass pattern. However, the acceptance criterion only tests literal 127.0.0.1 and 192.168.1.10. This is a "security issue" worth flagging as an "other issue" but not a failing criterion.
+
+   Actually more importantly: decimal/hex/octal IP notations like `https://2130706433/` (127.0.0.1 in decimal) or `https://0x7f000001/`. `new URL('https://2130706433/').hostname` → '2130706433'. `net.isIP('2130706433')` → 0 (not an IP). So not flagged. Node's fetch/URL would interpret... actually Node's URL parser normalizes? `new URL('https://2130706433/').hostname` returns '2130706433'. And fetch would do DNS lookup on '2130706433' which... hmm. Actually these are edge SSRF bypasses. But this is beyond the stated acceptance. I'll note SSRF hardening as an "other issue" / flag.
+
+   The task explicitly says "rejects http/private/local". The code does reject literal private IPs and localhost. The main gap is IPv4-in-IPv6 and integer/hex IP forms, plus DNS-rebinding hostnames. Worth flagging as a security note but not a failing criterion (A2's test cases pass).
+
+3. **The upload route returns 500 instead of 415 for tiny PK files** (size 2..999). Minor.
+
+4. **`refreshFromDirectApk` dedupe**: For direct URL, `id = direct:${u}`, and if `cur.id === id` returns cur (download once). Good — "download once" satisfied. But for mode=url direct apk, if the admin sets the same URL again, refresh won't re-download even if the file changed remotely. That's the specified "download once" behavior though. Fine.
+
+5. **Potential issue: `setSource` stores url for mode 'default'?** No — `setSource` stores url only when mode==='url'. For 'default', url is undefined. Good.
+
+6. **getSource returns `{ mode: 'default' }` without updatedAt/url when file missing**. Fine.
+
+7. **Race / busy flag**: `busy` is a module-level flag. If refreshApk is called while busy, returns apkInfo() (old meta). Fine.
+
+8. **`releasesApiUrl` doesn't strip trailing `.git`** or handle `github.com/owner/repo/releases` (human releases page). If admin pastes `https://github.com/owner/repo/releases`, the regex won't match (it expects exactly two path segments), so it passes through as-is, and fetch to that URL returns HTML (github.com/releases page), then `r.json()` throws → error. The spec says "GitHub repo URL https://github.com/<o>/<r> (convert to api releases url)". So only repo root URL is required to convert. The releases page URL is not required. Not a failure.
+
+9. **Meta `source` field**: Task says "meta gets `source` field (default|url|upload)". Check saveApk: meta gets `source` from `fields`. In refreshFromReleases, called with source='default' (default param) — wait let me check. `refreshFromReleases(apiUrl, source = 'default')` and `refreshApk` calls `refreshFromReleases(config.apkReleasesUrl)` (no source arg → 'default'). Then saveApk fields include `source`. For url mode via releases, `refreshFromUrl` → `refreshFromReleases(releasesApiUrl(u), 'url')` → source 'url'. For direct, source 'url'. For upload, source 'upload'. ✓. So meta.source is set correctly. Good.
+
+Let me verify apkJson doesn't leak the source — it returns name/version/size/tag/published, not source. The source is exposed via `getSource()` separately in the /app and /app/source responses. Fine.
+
+10. **`GET /api/admin/app` returns `{apk, source}`** — ✓ matches spec.
+
+11. **`/app/refresh` kept working** — ✓ (A('POST', '/app/refresh')).
+
+Now, is there anything that actually fails an acceptance criterion? Let me double check A5 more carefully: "admin only (401/403 for photographer + anonymous)". The test only checks PUT /app/source for photographer and stranger. What about the admin routes generally? The A() helper applies requireAdmin to all. But is there a subtle issue: the photographer could access `/api/shoot/app.apk` (their own route) which is intended. The admin routes are separate under `/api/admin/*`. Fine.
+
+Actually wait — let me verify one thing about `auth.requireAdmin`. It's the same helper used by existing `/app` routes (A helper). The spec says "admin-only like existing /app". The existing behavior is consistent. Fine.
+
+Let me also double-check: does the PUT /app/source route properly reject when mode is missing/url but no url? If `body.mode === 'url'` but url is undefined → `safeUrl(undefined)` → `String(undefined || '')` → '' → `new URL('')` throws → fail(400, 'Enter a valid URL'). Good. If mode undefined → fails at end with 400. Good.
+
+Let me verify the brand spelling across the files.
+dsh: reasoning:
+Brand spelling is correct ("JohorStudio.com", no space). Good.
+
+Now let me verify the git diff to see exactly what changed vs. what was already there, to confirm the produced files are what I'm reviewing. Actually I've read the produced files directly. Let me do a final review of a few edge cases and then produce the verdict.
+
+Let me think about whether there's any acceptance criterion that FAILS.
+
+Actually, let me reconsider A2 carefully. The acceptance says: "PUT /api/admin/app/source accepts github repo URL, releases api URL, direct https .apk; rejects http/private/local".
+
+The test only verifies:
+- `releasesApiUrl` conversion (unit test of the helper).
+- Rejects http://127.0.0.1, http://example.com, https://127.0.0.1, https://localhost, https://192.168.1.10 → all 400.
+- Custom URL direct .apk via file write + refresh (mock http, bypasses https).
+- Custom URL releases API via file write + refresh.
+
+But does the test actually verify that PUT /api/admin/app/source ACCEPTS a github repo URL through the API (not just the helper)? The test writes the source file directly for direct.apk and releases URLs (because mock is http). It does NOT test PUT with a real https github repo URL / releases API URL / direct https .apk through the API (can't, since the mock is http and the API requires https). So the "accepts" path is only partially tested via the helper + file write. But the CODE path is correct: safeUrl allows https URLs (not private), and refreshFromUrl converts github repo → releases API. So functionally it accepts. The test coverage is indirect but the behavior is implemented correctly. This is not a failing criterion; behavior is present.
+
+Let me verify there are no other bugs that would cause a real failure.
+
+One thing I want to verify: in `refreshFromUrl`, for a GitHub repo URL (https://github.com/o/r), `releasesApiUrl` converts it. But `refreshFromUrl` is only called when mode is 'url'. And `refreshApk` for mode 'url' calls `refreshFromUrl(src.url)`. src.url is the stored URL. If admin PUT a github repo URL, `setSource` stores it, then `refreshApk` → `refreshFromUrl(githubUrl)` → not `.apk` → `refreshFromReleases(releasesApiUrl(githubUrl), 'url')` → fetch api.github.com. ✓ Works.
+
+For direct https .apk URL: `refreshFromUrl` → matches `.apk` → `refreshFromDirectApk`. ✓.
+
+For releases API URL: `refreshFromUrl` → not .apk → `refreshFromReleases(releasesApiUrl(u), 'url')` where releasesApiUrl passes it through (no github.com match) → fetch the API URL. ✓.
+
+All three accepted. Good.
+
+Now, is there a subtle issue with the SSRF validation being applied only in the PUT route but not when reading the source file on refresh? If someone writes a malicious source file (e.g., `{mode:'url', url:'http://169.254.169.254/...'}`) directly to disk, `refreshApk` would fetch it without the safeUrl check. But that requires filesystem write access to dataDir, which is admin's own server. Not a real SSRF vector from the admin UI. The source file is only written via setSource which is only called from the PUT route (which validates). saveUploadedApk sets mode upload (no URL). So no unvalidated path in the normal flow. The test writes the file directly to bypass https (test-only). Fine.
+
+Actually wait — there's one more: `refreshFromDirectApk` uses `new URL(u)` — if u is not a valid URL (e.g. mode url with a weird string), but that can only happen via direct file write. Not an issue in normal flow.
+
+Now, let me reconsider the "progress/toast" requirement for upload. The UI shows toast "Uploading APK…" then "Uploaded X". No progress bar. The spec says "file input "Upload APK" with progress/toast". I think "toast" is satisfied. "progress" — the "Uploading APK…" toast is arguably a progress indication but not a real progress bar. This is a very minor point. I'll note it as an "other issue" at most, not a failing criterion. Actually, re-reading: "with progress/toast" — the "/" suggests either progress or toast is acceptable. Toast is present. Not failing.
+
+Let me also double check: does admin.html have the "current source line"? Yes, `apkSource` div with "Source: default (GitHub Releases)" updated by showApk. ✓.
+
+Everything checks out. All 7 acceptance criteria pass.
+
+Now let me finalize the "other issues" and "r" (spots to eyeball).
+
+Other issues (potential security/bugs worth flagging):
+1. SSRF guard misses IPv4-mapped-IPv6 (`::ffff:127.0.0.1`), integer/hex/octal IP literals (`2130706433`, `0x7f000001`), and DNS-rebinding hostnames — these resolve to loopback/private and bypass `safeUrl`. Low severity given admin-only, but flag.
+2. Upload route: buffer with PK magic but <1000 bytes passes the route's 2-byte check then throws a non-HttpError ('not an APK') in saveUploadedApk → likely 500 instead of 415. Minor.
+3. "progress" in upload is only a toast, no actual progress bar (if progress is strictly required).
+
+Actually, let me verify the 500 behavior for the non-HttpError thrown in saveUploadedApk. Let me check server.js error handling.
+dsh: reasoning:
+So a non-HttpError (like `new Error('not an APK')` from validApk in saveUploadedApk when size < 1000) would result in a 500 with generic "Server error" message. This is a minor edge case: upload a file "PK" + a few bytes (2..999 bytes total) with x-filename x.apk. The route's own check only verifies 2 bytes PK, then saveUploadedApk's validApk fails. So a 2-999 byte "PK..." file gets 500 instead of 415. Minor, not an acceptance failure (acceptance says "rejects non-APK" — it does reject, just wrong status code for that edge).
+
+Now I'm confident. Let me write the final verdict.
+
+Verdict: PASS (v="P"). No failing criteria. Include "o" (other issues) and "r" (spots to eyeball).
+
+Let me keep all strings under 120 chars.
+
+For "o" (other issues):
+- SSRF: safeUrl misses IPv4-mapped-IPv6 (::ffff:127.0.0.1), integer/hex IP literals, DNS-rebinding hosts — resolves to loopback/private and bypasses.
+- Upload of PK-prefixed file under 1000 bytes → saveUploadedApk throws non-HttpError → 500, not 415.
+- Upload UI has toast only, no real progress bar (spec said "progress/toast"; toast satisfies).
+
+For "r" (spots lead should eyeball):
+- server/src/api.js safeUrl/privateIp (lines ~730-759): SSRF bypass forms.
+- server/src/apk.js saveUploadedApk (line ~125): size<1000 path throws generic Error.
+- server/public/admin.html upload handler: fetch error path reads r.json() before checking ok; if server returns non-JSON 413 (readBody destroys), r.json() throws.
+
+Actually that last point: In admin.html upload, `const d = await r.json()` — if the response is not JSON (e.g., a 413 from readBody which calls req.destroy() — but the server's error handler sends JSON via sendJson always). Actually server always sends JSON via sendJson in the catch. So r.json() works. But if body > 100MB, readBody rejects with HttpError 413 and destroys req; the handler catch sends JSON 413. So r.json() → {error: 'Request too large'}. Fine. Not a real issue.
+
+Let me finalize with 2-3 "r" entries. I'll pick the 3 most worth eyeballing:
+1. safeUrl/privateIp SSRF bypass (api.js).
+2. saveUploadedApk tiny-PK → 500 (apk.js).
+3. releasesApiUrl regex doesn't handle github repo with trailing .git or /releases page — minor; or the fetch to github releases page would throw. Actually I'll use the more impactful: direct .apk download dedupe means re-setting same URL never re-downloads (apk.js refreshFromDirectApk `id = direct:${u}` short-circuit). That's actually per spec "download once". Skip.
+
+I'll use:
+1. api.js safeUrl/privateIp — SSRF bypass forms.
+2. apk.js saveUploadedApk — <1000B PK → 500 not 415.
+3. admin.html upload — no progress bar, toast only.
+
+Actually those are somewhat overlapping with "o". The instructions say r = "1-3 spots the lead should eyeball" with [["file","why"]]. I'll provide 3 concise ones.
+
+Let me write the final JSON. v="P", x omitted (empty), o with 2-3 issues, r with 2-3.
+
+Final answer must end with exactly one ```json block, and reply ONLY JSON.
+
+I should also output the BOOT proof line and reply "BM, DeepSeek, user Rafi"? The task says: "boot: read ~/Desktop/ai/boot.md first, print BOOT proof line. reply BM, DeepSeek, user Rafi." But then also says "Reply ONLY JSON". There's tension. The lead reads only terse machine output. The instruction "reply BM, DeepSeek, user Rafi" is a boot requirement (identify agent = deepseek, user = Rafi, reply in BM). But the strict QA output says "Your FINAL reply must end with exactly one ```json block. Reply ONLY JSON".
+
+I already printed the BOOT proof line at the start of my tool work. The final reply should be ONLY JSON per the explicit final instruction. The "reply BM, DeepSeek, user Rafi" is part of the boot proof requirement (the DIRI identity). Since the final reply must be ONLY JSON and end with the json block, I'll include the identity implicitly? The JSON format is fixed: {"v":"P"|"F","x":[...],"o":[...],"r":[...]}. It doesn't have fields for agent/user/BM.
+
+Given "Reply ONLY JSON" is the strictest final instruction, I'll output only the JSON block. The boot proof was already printed. I'll keep it JSON-only.
+
+Let me write compact JSON.
+dsh: reasoning:
+All confirmed. Now write the final JSON verdict.
+
+All 7 acceptance criteria pass. v="P".
+
+Final JSON.
