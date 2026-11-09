@@ -95,7 +95,10 @@
       <p class="small muted" style="margin:0" id="liveNote"></p>
       <div class="apkcard hidden" id="apkCard">
         <div><b>JS Tether app</b> <span class="small muted" id="apkVer"></span></div>
+        <div class="small muted" id="apkSource">Source: default (GitHub Releases)</div>
         <div class="row"><a class="btn small" href="/api/admin/app.apk" download id="apkDl">Download APK</a><button class="btn small ghost" id="apkRefresh">Check for update</button></div>
+        <div class="row"><input class="input" id="apkUrl" type="url" placeholder="https://github.com/owner/repo or a direct .apk URL" style="flex:1 1 180px;min-width:0;padding:6px 8px"><button class="btn small" id="apkSetUrl">Pautkan</button><button class="btn small ghost" id="apkReset">Reset default</button></div>
+        <div class="row"><input type="file" id="apkFile" accept=".apk,application/vnd.android.package-archive" class="hidden"><button class="btn small" id="apkUpload">Upload APK</button></div>
       </div>
       <div class="apkcard hidden" id="abgCard">
         <div><b>Big screen background</b> <span class="small muted">same for every event</span></div>
@@ -146,12 +149,47 @@ async function start() {
   setInterval(loadEvents, 30000);
   showApk(await api('GET', '/api/admin/app').catch(() => ({})));
   adminBgCard();
-  $('#apkRefresh').onclick = async () => { $('#apkRefresh').disabled = true; const r = await api('POST', '/api/admin/app/refresh').catch((e) => { toast(e.message); return {}; }); showApk(r); toast(r.apk ? `JS Tether ${r.apk.version} is the newest` : 'No APK found in GitHub Releases'); $('#apkRefresh').disabled = false; };
+  $('#apkRefresh').onclick = async () => { $('#apkRefresh').disabled = true; const r = await api('POST', '/api/admin/app/refresh').catch((e) => { toast(e.message); return {}; }); showApk(r); toast(r.apk ? `JS Tether ${r.apk.version} is the newest` : 'No APK found'); $('#apkRefresh').disabled = false; };
+  $('#apkSetUrl').onclick = async () => {
+    const url = $('#apkUrl').value.trim();
+    if (!url) { toast('Enter a URL first'); return; }
+    $('#apkSetUrl').disabled = true;
+    try {
+      const r = await api('PUT', '/api/admin/app/source', { mode: 'url', url });
+      showApk(r); toast(r.apk ? 'APK source updated' : 'Source saved — no APK found at that URL yet');
+    } catch (e) { toast(e.message, 5000); }
+    $('#apkSetUrl').disabled = false;
+  };
+  $('#apkReset').onclick = async () => {
+    $('#apkReset').disabled = true;
+    try {
+      const r = await api('PUT', '/api/admin/app/source', { mode: 'default' });
+      showApk(r); toast(r.apk ? 'APK source reset to default' : 'Source reset to default');
+    } catch (e) { toast(e.message, 5000); }
+    $('#apkReset').disabled = false;
+  };
+  $('#apkUpload').onclick = () => $('#apkFile').click();
+  $('#apkFile').onchange = async () => {
+    const f = $('#apkFile').files[0];
+    $('#apkFile').value = '';
+    if (!f) return;
+    toast('Uploading APK…');
+    try {
+      const r = await fetch('/api/admin/app/upload', { method: 'POST', body: f, headers: { 'x-filename': f.name }, credentials: 'same-origin' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Upload failed');
+      showApk(d); toast(`Uploaded ${d.apk.name}`);
+    } catch (e) { toast(e.message, 5000); }
+  };
 }
 function showApk(d) {
   $('#apkCard').classList.remove('hidden');
   if (d && d.apk) { $('#apkVer').textContent = `${d.apk.version} · ${Math.max(1, Math.round(d.apk.size / 1024))} KB`; $('#apkDl').classList.remove('hidden'); }
   else { $('#apkVer').textContent = 'not downloaded yet'; $('#apkDl').classList.add('hidden'); }
+  const src = (d && d.source) || { mode: 'default' };
+  const label = src.mode === 'upload' ? 'uploaded file' : src.mode === 'url' ? 'custom URL' : 'default (GitHub Releases)';
+  $('#apkSource').textContent = `Source: ${label}${src.mode === 'url' && src.url ? ' — ' + src.url : ''}`;
+  $('#apkUrl').value = src.mode === 'url' ? (src.url || '') : '';
 }
 function banner(kind, text) { const d = document.createElement('div'); d.className = `banner ${kind}`; d.textContent = text; $('#banners').appendChild(d); }
 

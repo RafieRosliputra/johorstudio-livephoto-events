@@ -7,6 +7,8 @@
 //   /api/uploads/*     chunked, resumable uploads shared by everyone
 import fs from 'node:fs';
 import path from 'node:path';
+import net from 'node:net';
+import dns from 'node:dns/promises';
 import { config } from './config.js';
 import * as db from './db.js';
 import * as auth from './auth.js';
@@ -14,7 +16,7 @@ import * as storage from './storage.js';
 import { sniff, imageSizeOfFile, stripWebpMetadata } from './imageinfo.js';
 import { subscribe, publish, publishPhoto, setPhotoSerializer, viewerCount } from './live.js';
 import { findFaces, checkPhoto } from './moderation.js';
-import { apkInfo, refreshApk, sendApk } from './apk.js';
+import { apkInfo, refreshApk, sendApk, getSource, setSource, saveUploadedApk } from './apk.js';
 import { zipPlan } from './zip.js';
 import { Router, HttpError, fail, sendJson, readJson, readBody, clientIp, randomToken, shortToken, uuid } from './http.js';
 
@@ -726,8 +728,73 @@ A('PUT', '/events/:id/photos/:photo/thumb/:size', async (req, res, { params }) =
   db.addPhotoThumb(p.id, bit);
   sendJson(res, 200, { ok: true });
 });
-A('GET', '/app', (req, res) => sendJson(res, 200, { apk: apkJson(apkInfo()) }));
-A('POST', '/app/refresh', async (req, res) => sendJson(res, 200, { apk: apkJson(await refreshApk()) }));
+// SSRF guard for the admin-set APK source URL: https only, no localhost / private / local addresses.
+function privateIp(host) {
+  if (net.isIP(host) === 4) {
+    const p = host.split('.').map(Number);
+    if (p[0] === 0 || p[0] === 10 || p[0] === 127) return true;
+    if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return true;
+    if (p[0] === 192 && p[1] === 168) return true;
+    if (p[0] === 169 && p[1] === 254) return true;
+    if (p[0] === 100 && p[1] >= 64 && p[1] <= 127) return true;
+    return false;
+  }
+  if (net.isIP(host) === 6) {
+    const h = host.toLowerCase();
+    if (h === '::' || h === '::1') return true;
+    if (h.startsWith('::ffff:')) return true; // IPv4-mapped IPv6
+    if (h.startsWith('fe8') || h.startsWith('fe9') || h.startsWith('fea') || h.startsWith('feb')) return true; // fe80::/10
+    if (h.startsWith('fc') || h.startsWith('fd')) return true; // fc00::/7
+    if (h.startsWith('ff')) return true; // multicast
+    return false;
+  }
+  return false;
+}
+function safeUrl(raw) {
+  let u;
+  try { u = new URL(String(raw || '')); } catch { fail(400, 'Enter a valid URL'); }
+  if (u.protocol !== 'https:') fail(400, 'Only https:// URLs are allowed');
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) fail(400, 'Local addresses are not allowed');
+  if (net.isIP(host) && privateIp(host)) fail(400, 'Private addresses are not allowed');
+  return u;
+}
+// Resolve the host and refuse if any address is private (blocks names that point inside the network).
+async function assertPublicHost(u) {
+  const host = u.hostname.replace(/^\[|\]$/g, '');
+  if (net.isIP(host)) return;
+  let addrs;
+  try { addrs = await dns.lookup(host, { all: true }); } catch { fail(400, 'Host not found'); }
+  if (addrs.some((a) => privateIp(a.address))) fail(400, 'Private addresses are not allowed');
+}
+
+A('GET', '/app', (req, res) => sendJson(res, 200, { apk: apkJson(apkInfo()), source: getSource() }));
+A('POST', '/app/refresh', async (req, res) => { const m = await refreshApk(); sendJson(res, 200, { apk: apkJson(m), source: getSource() }); });
+A('PUT', '/app/source', async (req, res) => {
+  const body = await readJson(req);
+  if (body.mode === 'default') {
+    setSource({ mode: 'default' });
+    const m = await refreshApk();
+    return sendJson(res, 200, { apk: apkJson(m), source: getSource() });
+  }
+  if (body.mode === 'url') {
+    const u = safeUrl(body.url);
+    await assertPublicHost(u);
+    const url = u.toString();
+    setSource({ mode: 'url', url });
+    const m = await refreshApk();
+    return sendJson(res, 200, { apk: apkJson(m), source: getSource() });
+  }
+  fail(400, 'Mode must be "default" or "url"');
+});
+A('POST', '/app/upload', async (req, res) => {
+  const buf = await readBody(req, 100 * 1024 * 1024);
+  const name = String(req.headers['x-filename'] || '');
+  if (!/\.apk$/i.test(name)) fail(415, 'The file must be a .apk');
+  if (buf.length < 1000 || buf[0] !== 0x50 || buf[1] !== 0x4b) fail(415, 'Not a valid APK (PK signature)');
+  const m = saveUploadedApk(buf, name);
+  sendJson(res, 200, { apk: apkJson(m), source: getSource() });
+});
 A('GET', '/app.apk', (req, res) => { const m = apkInfo(); if (!m) fail(404, 'The app is not available yet'); sendApk(req, res, m); });
 A('GET', '/status', (req, res) => sendJson(res, 200, { storageOnline: storage.storageOnline(), photosDir: config.photosDir, moderator: config.moderatorUrl || null, scan: storage.scanAll() }));
 

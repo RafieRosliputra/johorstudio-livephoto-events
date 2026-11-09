@@ -18,6 +18,7 @@ const aux = http.createServer(async (req, res) => {
   if (req.url === '/certs') return res.end(JSON.stringify({ keys: [jwk] }));
   if (req.url === '/releases') return res.end(JSON.stringify([{ tag_name: 'jstether-v4.0', name: 'JS Tether 4.0', assets: [{ id: 7, name: 'JSTether-v4.0.apk', updated_at: 'x', browser_download_url: `${auxUrl}/apk` }] }]));
   if (req.url === '/apk') return res.end(Buffer.concat([Buffer.from('PK'), Buffer.alloc(3000)]));
+  if (req.url === '/direct.apk') return res.end(Buffer.concat([Buffer.from('PK'), Buffer.alloc(3000)]));
   if (req.url === '/check') {
     let b = ''; for await (const c of req) b += c;
     modCalls++;
@@ -38,6 +39,7 @@ Object.assign(process.env, {
 const { handler } = await import('../src/server.js');
 const db = await import('../src/db.js');
 const storage = await import('../src/storage.js');
+const apk = await import('../src/apk.js');
 
 function jwt(email, { aud = 'aud-livephoto', exp = Math.floor(Date.now() / 1000) + 3600 } = {}) {
   const enc = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
@@ -219,6 +221,50 @@ test('APK download only after login (photographer / admin)', async () => {
   assert.equal((await photog('GET', '/api/shoot/app')).body.apk.name, 'JSTether-v4.0.apk');
   const p = await photog('GET', '/api/shoot/app.apk');
   assert.equal(p.status, 200); assert.equal(p.body.length, 3002);
+});
+
+test('admin APK source: SSRF guard, custom URL, upload, reset default', async () => {
+  // GitHub repo URL is converted to its releases API URL; other URLs pass through.
+  assert.equal(apk.releasesApiUrl('https://github.com/owner/repo'), 'https://api.github.com/repos/owner/repo/releases?per_page=10');
+  assert.equal(apk.releasesApiUrl('https://github.com/owner/repo/'), 'https://api.github.com/repos/owner/repo/releases?per_page=10');
+  assert.equal(apk.releasesApiUrl('https://api.github.com/repos/o/r/releases?per_page=10'), 'https://api.github.com/repos/o/r/releases?per_page=10');
+
+  // Reject non-https and private/local addresses (SSRF).
+  for (const url of ['http://127.0.0.1/app.apk', 'http://example.com/app.apk', 'https://127.0.0.1/app.apk', 'https://localhost/app.apk', 'https://192.168.1.10/app.apk']) {
+    assert.equal((await A('PUT', '/api/admin/app/source', { body: { mode: 'url', url } })).status, 400, url);
+  }
+  assert.equal((await A('PUT', '/api/admin/app/source', { body: { mode: 'nope' } })).status, 400);
+  // Photographers and anonymous callers cannot change the source.
+  assert.equal((await photog('PUT', '/api/admin/app/source', { body: { mode: 'default' } })).status, 401);
+  assert.equal((await stranger('PUT', '/api/admin/app/source', { body: { mode: 'default' } })).status, 401);
+
+  // Custom URL = direct .apk (write the source file directly: the mock is http, the API only takes https).
+  const appDir = path.join(process.env.DATA_DIR, 'app');
+  fs.mkdirSync(appDir, { recursive: true });
+  fs.writeFileSync(path.join(appDir, 'apk-source.json'), JSON.stringify({ mode: 'url', url: `${auxUrl}/direct.apk`, updatedAt: Date.now() }));
+  let r = await A('POST', '/api/admin/app/refresh');
+  assert.equal(r.body.source.mode, 'url');
+  let dl = await A('GET', '/api/admin/app.apk');
+  assert.equal(dl.status, 200); assert.equal(dl.body[0], 0x50); assert.equal(dl.body[1], 0x4b); assert.equal(dl.body.length, 3002);
+
+  // Custom URL = GitHub releases API (mock serves the same JSON shape).
+  fs.writeFileSync(path.join(appDir, 'apk-source.json'), JSON.stringify({ mode: 'url', url: `${auxUrl}/releases`, updatedAt: Date.now() }));
+  r = await A('POST', '/api/admin/app/refresh');
+  assert.equal(r.body.apk.version, '4.0');
+
+  // Upload: non-APK body and wrong extension are rejected.
+  assert.equal((await A('POST', '/api/admin/app/upload', { raw: Buffer.concat([Buffer.from('MZ'), Buffer.alloc(3000)]), headers: { 'x-filename': 'x.apk' } })).status, 415);
+  assert.equal((await A('POST', '/api/admin/app/upload', { raw: Buffer.concat([Buffer.from('PK'), Buffer.alloc(3000)]), headers: { 'x-filename': 'x.txt' } })).status, 415);
+
+  // Valid upload ok, mode becomes upload, survives refresh (sync must not overwrite it).
+  const up = await A('POST', '/api/admin/app/upload', { raw: Buffer.concat([Buffer.from('PK'), Buffer.alloc(5000)]), headers: { 'x-filename': 'MyUpload.apk' } });
+  assert.equal(up.status, 200); assert.equal(up.body.apk.name, 'MyUpload.apk'); assert.equal(up.body.source.mode, 'upload');
+  r = await A('POST', '/api/admin/app/refresh');
+  assert.equal(r.body.apk.name, 'MyUpload.apk'); assert.equal(r.body.source.mode, 'upload');
+
+  // Reset to default restores the GitHub-releases APK from config.
+  const rst = await A('PUT', '/api/admin/app/source', { body: { mode: 'default' } });
+  assert.equal(rst.status, 200); assert.equal(rst.body.source.mode, 'default'); assert.equal(rst.body.apk.name, 'JSTether-v4.0.apk');
 });
 
 test('organiser panel: review queue, allow / remove, request to close', async () => {
