@@ -1,6 +1,7 @@
 # Deploy runbook · ccam.my white-label
 
-> English, dense. Execute in order. Nothing here has been run against production yet.
+> English, dense. Executed against production on 2026-11-10 19:33 (see `docs/CCAM-STATUS.md` §5 for the exact state).
+> Keep this for future tenants/deploys and rollback.
 > Repo: `johorstudio-livephoto-events` · branch with the work: `ccam-tenants` (based on `205ea6d`).
 > App: TrueNAS custom app `livephoto` on m10 (`/mnt/ssd/livephoto/app`, port 8095), behind cloudflared tunnel.
 

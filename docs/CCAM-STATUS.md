@@ -70,11 +70,27 @@ Recorded evidence:
   primary `#872983` (7.85:1), accent `#f5ba22`, font Raleway, 8 event-photo candidates, logo downloaded — 0.9 s.
 - Browser checks: 0 JS exceptions on tenant and platform landing pages; `#yr`, `#organiserLink`, gallery WhatsApp link intact.
 
-## 5. What is left (outside the code objective)
+## 5. Production state (deployed 2026-11-10 19:33)
 
-1. **Rafi**: add Cloudflare tunnel public hostnames `ccam.my` + `*.ccam.my` → `HTTP 192.168.0.100:8095`
-   (delete leftover A/AAAA/Worker first, Always Use HTTPS ON, no Access on those routes) — `docs/deploy-runbook.md` §2.
-2. **Rafi**: approve production deploy → `HOST=truenas_admin@100.101.43.120 BRANCH=ccam-tenants ./deploy/update.sh`.
-3. **Rafi**: confirm the three ASSUME in `docs/SIAP.md` §5 (apex redirect, BM disclaimer, AA colours).
-4. Phase 2 (optional): theme the "How it works" illustrations, per-tenant Umami IDs, rate-limit imports,
-   consider dropping SVG logos, per-tenant storage folders.
+Done directly by DeepSeek after Rafi's go-ahead:
+
+1. **Tunnel** `m10`: public hostnames `ccam.my` + `*.ccam.my` → `HTTP 192.168.0.100:8095` (config version 54, 25 ingress,
+   every old route untouched, backup in the workspace `demo/cf-backup/`).
+2. **DNS** zone `ccam.my`: placeholder `A 192.0.2.1` records at `@` and `www` deleted; `CNAME @`, `CNAME www`,
+   `CNAME *` → `5d1680e1-a30b-4010-9d52-eeae3c7abac9.cfargotunnel.com`, proxied.
+3. **Worker routes** `ccam.my/*` and `www.ccam.my/*` (script `ccam-under-construction`) removed — they were the
+   "Under Construction" page. Script itself still exists (unused) and can be deleted later.
+4. **Always Use HTTPS** ON for the zone (http → 301 https verified).
+5. **App deployed** to m10 (`livephoto`, commit `4620982`), and `main` fast-forwarded to it so the default
+   `deploy/update.sh` cannot roll tenancy back.
+6. **First tenant live**: organizer `passion` (id `3de0e8d2-1327-4adc-a61b-b37c256d2fe6`), status `live`,
+   brand kit applied (colours, Raleway, 3 logos downloaded, 5 hero photos).
+
+Verified from outside: `https://ccam.my/` → 302 to `live.johorstudio.com`; `https://passion.ccam.my/` → 200 branded
+(31,885 B, title "Passion Sound & Event Live", `--teal:#c50a76`, logo 200, `/data/hero.json` 5 client photos);
+`passion.ccam.my/admin` → 302 to the Access-protected admin; `live.johorstudio.com` 200 unchanged.
+
+Remaining for Rafi:
+1. Create the client's events in `/admin` and pick **Client = Passion Sound & Event** (gallery/QR only opens on that domain).
+2. Confirm the three ASSUME in `docs/SIAP.md` §5 (apex redirect, BM disclaimer, AA colours) — editable in the admin.
+3. Optional: delete the unused `ccam-under-construction` Worker; phase 2 (themed illustrations, per-tenant Umami, import rate limit).
