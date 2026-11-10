@@ -165,9 +165,9 @@ const COLOR_FIELDS = [
   { k: 'colorAccent', label: 'Accent', hint: 'live badge, alerts', def: 'accent' },
 ];
 const LOGO_KINDS = [
-  { k: 'logo', label: 'Logo', hint: 'main logo in the header' },
-  { k: 'logo-dark', label: 'Logo for dark backgrounds', hint: 'optional, dark headers' },
-  { k: 'favicon', label: 'Favicon', hint: 'browser tab icon' },
+  { k: 'logo', field: 'logo', label: 'Logo', hint: 'main logo in the header' },
+  { k: 'logo-dark', field: 'logoDark', label: 'Logo for dark backgrounds', hint: 'optional, dark headers' },
+  { k: 'favicon', field: 'favicon', label: 'Favicon', hint: 'browser tab icon' },
 ];
 
 let zone = 'ccam.my';
@@ -636,7 +636,7 @@ function renderLogos() {
   const wrap = $('#edLogos');
   if (!wrap) return;
   wrap.innerHTML = LOGO_KINDS.map((f) => {
-    const src = safeMedia(draft.brand[f.k]);
+    const src = safeMedia(draft.brand[f.field]);
     return `<div class="logorow">
       <div class="logothumb">${src ? `<img src="${esc(src)}" alt="${esc(f.label)}">` : '<span class="small muted">none</span>'}</div>
       <div class="logobody">
