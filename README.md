@@ -44,7 +44,8 @@ The same app and database serve every client brand: the brand is chosen from the
   from the brand, and the admin UI can fill it from the website import (Event photos).
 - Env: `ADMIN_HOST`, `PLATFORM_HOSTS`, `TENANT_ZONE`, `APEX_MODE`, `BRANDS_DIR`, `TENANT_DISCLAIMER`.
 - Deploy: one wildcard DNS record + one tunnel public hostname (`*.ccam.my`) once; on/off is then a status switch in the admin.
-- Docs in the ccam.my workspace: `docs/SIAP.md`, `docs/deploy-runbook.md`, `docs/CHANGES.md`.
+- Docs: `docs/CCAM-STATUS.md` (spec vs code, evidence, assumptions), `docs/DEPLOY-CCAM.md` (Cloudflare + m10 runbook).
+The research/spec bundle stays in the ccam.my workspace (`docs/spec-tenant.md`, `docs/infra-routing.md`, `docs/SIAP.md`).
 
 ## Linked repo: JS Tether app
 
