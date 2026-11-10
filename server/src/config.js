@@ -40,6 +40,21 @@ export const config = {
   apkReleasesUrl: env.APK_RELEASES_URL ?? 'https://api.github.com/repos/RafieRosliputra/a7rii-android-push/releases?per_page=10',
   whatsapp: env.WHATSAPP || '60127983745',
   contactUrl: env.CONTACT_URL || 'https://johorstudio.com/#contact',
+
+  // ---------------- white-label (ccam.my) ----------------
+  // Admin UI + Cloudflare Access live on this host only; tenant hosts never serve /admin.
+  adminHost: (env.ADMIN_HOST || 'live.johorstudio.com').toLowerCase(),
+  // Extra hosts that get the original JohorStudio branding (the studio website links here).
+  platformHosts: (env.PLATFORM_HOSTS || 'johorstudio.com,www.johorstudio.com')
+    .toLowerCase().split(',').map((s) => s.trim()).filter(Boolean),
+  // Tenants are <slug>.<tenantZone> (e.g. passion.ccam.my). Wildcard DNS + tunnel hostname point here.
+  tenantZone: (env.TENANT_ZONE || 'ccam.my').toLowerCase(),
+  // Apex behaviour: 'redirect' sends ccam.my/* to publicUrl/*; 'app' serves the apex brand (brand:apex).
+  apexMode: env.APEX_MODE === 'app' ? 'app' : 'redirect',
+  // Brand logos uploaded from the admin UI (kept outside git, next to the database).
+  brandsDir: path.resolve(env.BRANDS_DIR || path.join(env.DATA_DIR || './data', 'brands')),
+  // Footer credit shown at the bottom of every tenant page ('{brand}' = tenant name).
+  tenantDisclaimer: env.TENANT_DISCLAIMER || 'Servis disediakan oleh JohorStudio.com',
 };
 
 export const EVENTS_DIR = () => path.join(config.photosDir, 'EVENTS');

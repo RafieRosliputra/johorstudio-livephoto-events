@@ -78,13 +78,14 @@ export function cleanName(s, max = 30) {
 }
 
 /** Exchange a code for a session. `want` limits which role the form accepts ('guest' | 'photographer' | 'client' | undefined). */
-export function loginWithCode({ code, name, want, ip }) {
+export function loginWithCode({ code, name, want, ip, allowed = null }) {
   const mins = lockInfo(ip);
   if (mins) throw new HttpError(429, `Too many wrong codes. Try again in ${mins} minute${mins === 1 ? '' : 's'}.`, { triesLeft: 0 });
   code = String(code || '').replace(/\D/g, '');
   if (code.length !== 6) throw new HttpError(400, 'Enter the 6-digit code');
   const ev = db.eventByCode(code);
-  if (!ev) throw wrongCode(ip);
+  // White-label: a code is only valid on the host that owns the event (no cross-tenant codes).
+  if (!ev || (allowed && !allowed(ev))) throw wrongCode(ip);
   const role = ev.code_role;
   if (want && want !== role) {
     if (want === 'guest' && role === 'photographer') throw new HttpError(400, 'This is a photographer code. Tap "Sign in as photographer".');

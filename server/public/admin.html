@@ -83,7 +83,7 @@
 <body>
 <header class="topbar">
   <div class="wrap">
-    <a class="brand" href="https://johorstudio.com" aria-label="JohorStudio.com"><span class="brand-name">JohorStudio.com</span></a><a class="live-home" href="https://live.johorstudio.com">Live home</a>
+    <a class="brand" href="https://johorstudio.com" aria-label="JohorStudio.com"><span class="brand-name">JohorStudio.com</span></a><a class="live-home" href="https://live.johorstudio.com">Live home</a><a class="live-home" id="orgLink" href="/admin/organizers" hidden>Event organisers</a>
     <div class="usermenu"><span id="me"></span><button class="btn small light hidden" id="logoutBtn">Sign out</button></div>
   </div>
 </header>
@@ -121,6 +121,7 @@ const PANEL = location.pathname.startsWith('/panel');
 const BASE = PANEL ? '/api/client' : '/api/admin';
 let events = [], cur = null, feed = null, grid = null, photoFilter = 'review';
 if (PANEL) document.body.classList.add('panel-mode');
+else document.getElementById('orgLink').hidden = false;
 
 const fmtCode = (c) => c ? `${c.slice(0, 3)} ${c.slice(3)}` : '';
 const when = (ms) => ms ? new Date(ms).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '';
@@ -210,7 +211,7 @@ async function loadEvents(selectId) {
   $('#elist').innerHTML = events.length ? events.map((e) => `
     <button class="eitem" data-id="${e.id}" aria-current="${cur?.event.id === e.id}">
       <span class="t">${esc(e.title)}</span>
-      <span class="m">${chip(e.status)}${e.reviewCount ? `<span class="chip review">${e.reviewCount} to review</span>` : ''}${e.request ? '<span class="chip scheduled">request</span>' : ''}<span>${esc(fmtDate(e.date))} · ${e.photoCount} photos</span></span>
+      <span class="m">${chip(e.status)}${e.organizerName ? `<span class="chip" style="background:var(--teal-soft);color:var(--teal-dark)">${esc(e.organizerName)}</span>` : ''}${e.reviewCount ? `<span class="chip review">${e.reviewCount} to review</span>` : ''}${e.request ? '<span class="chip scheduled">request</span>' : ''}<span>${esc(fmtDate(e.date))} · ${e.photoCount} photos</span></span>
     </button>`).join('') : '<p class="muted small">No events yet.</p>';
   $$('.eitem').forEach((b) => b.onclick = () => openEvent(b.dataset.id));
   const want = selectId || (!cur && location.hash.slice(1));
@@ -236,7 +237,7 @@ function render() {
     <div class="card section">
       <div class="row" style="justify-content:space-between">
         <div style="min-width:0"><div class="small muted">EVENTS / ${esc(e.folder)}</div><h2 class="title">${esc(e.title)}</h2>
-          <div class="small muted">${esc(fmtDate(e.date))}${e.organiser ? ' · ' + esc(e.organiser) : ''}</div>
+          <div class="small muted">${esc(fmtDate(e.date))}${e.organiser ? ' · ' + esc(e.organiser) : ''}${e.organizerName ? ' · <span class="pill teal" style="font-size:11px">' + esc(e.organizerName) + '</span>' : ''}</div>
           <button class="linkbtn dlink" data-copy="${esc(location.origin + (PANEL ? '/panel#' : '/admin#') + e.id)}" title="Click to copy">${esc(location.host + (PANEL ? '/panel#' : '/admin#') + e.id)}</button></div>
         <div>${chip(e.status)}</div>
       </div>
@@ -373,7 +374,7 @@ function liveControls(e, admin) {
 }
 
 const ROLE_Q = { public: '', photographer: '?r=p', client: '?r=o' };
-const codeUrl = (key, value) => (key === 'photographer' ? `https://live.johorstudio.com/join/${value}` : `https://live.johorstudio.com/c/${value}${ROLE_Q[key] || ''}`);
+const codeUrl = (key, value) => (key === 'photographer' ? `${location.origin}/join/${value}` : `${location.origin}/c/${value}${ROLE_Q[key] || ''}`);
 function codeCard(label, key, value, admin, help) {
   const url = codeUrl(key, value);
   return `<div class="code"><span class="lbl">${label}</span><span class="num">${esc(fmtCode(value))}</span>
@@ -716,13 +717,22 @@ async function makeMissingThumbs(e) {
   if (job === thumbJob && $('#thumbNote')) $('#thumbNote').textContent = `${done} preview${done === 1 ? '' : 's'} made`;
 }
 
-$('#newBtn').onclick = () => {
+$('#newBtn').onclick = async () => {
   const t = todayYmd();
+  // White-label clients (ccam.my): an event can belong to one organiser, so its gallery only opens on
+  // that client's domain. Hidden when no organiser exists yet.
+  let orgs = [];
+  try { orgs = (await api('GET', '/api/admin/organizers')).organizers || []; } catch { /* endpoint missing on an old deploy */ }
+  const clientField = orgs.length ? `<div class="field"><label for="ncl">Client (white-label domain)</label><select class="input" id="ncl">
+      <option value="">JohorStudio.com (platform)</option>
+      ${orgs.map((o) => `<option value="${esc(o.id)}">${esc(o.name)} — ${esc(o.slug)}.ccam.my</option>`).join('')}
+    </select></div>` : '';
   const m = modal(`<h2>New event</h2>
     <form id="nf" style="display:flex;flex-direction:column;gap:12px">
       <div class="field"><label for="nd">Date</label><input class="input" id="nd" type="date" required value="${t.slice(0, 4)}-${t.slice(4, 6)}-${t.slice(6)}"></div>
       <div class="field"><label for="nt">Event name</label><input class="input" id="nt" required maxlength="80" placeholder="Annual Dinner ABC Sdn Bhd"></div>
       <div class="field"><label for="no">Organiser <span class="muted">(optional, shown in the photo notice)</span></label><input class="input" id="no" maxlength="80"></div>
+      ${clientField}
       <p class="error" id="nerr"></p>
       <div class="row"><button class="btn">Create</button><button type="button" class="btn ghost" data-close>Cancel</button></div>
     </form>`);
@@ -730,7 +740,7 @@ $('#newBtn').onclick = () => {
   $('#nf', m.el).onsubmit = async (ev) => {
     ev.preventDefault();
     try {
-      const { event } = await api('POST', '/api/admin/events', { date: $('#nd', m.el).value.replace(/-/g, ''), title: $('#nt', m.el).value, organiser: $('#no', m.el).value });
+      const { event } = await api('POST', '/api/admin/events', { date: $('#nd', m.el).value.replace(/-/g, ''), title: $('#nt', m.el).value, organiser: $('#no', m.el).value, organizerId: ($('#ncl', m.el) || {}).value || '' });
       m.close(); await loadEvents(event.id); toast('Event created. Set the start time and press Go live.');
     } catch (err) { $('#nerr', m.el).textContent = err.message; }
   };

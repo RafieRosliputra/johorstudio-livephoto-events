@@ -1,0 +1,1147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#20272b">
+<title>Event organizer · JohorStudio.com Live</title>
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="/css/site.css">
+<style>
+  /* page-local layout: mirrors public/admin.html, no external assets */
+  .banner { padding: 10px 16px; font-size: 14px; font-weight: 600; }
+  .banner.red { background: #fbe4e2; color: #8a2a24; }
+  .banner.amber { background: #fff2dc; color: #7a4a00; }
+  .hlink { color: var(--mist); text-decoration: none; font-size: 15px; white-space: nowrap; }
+  .hlink:hover { color: #fff; }
+  .usermenu { display: flex; align-items: center; gap: 12px; font-size: 14px; color: var(--mist); }
+
+  .pagehead { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; padding: 22px 0 2px; }
+  .pagetitle { margin: 0; font-size: 26px; font-stretch: 85%; letter-spacing: .01em; }
+  .pagehead p { margin: 0; }
+
+  .layout { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; padding: 16px 0 28px; align-items: start; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .layout.detail-open .olistwrap { display: none; } }
+  @media (min-width: 901px) { .back { display: none !important; } }
+
+  .olistwrap { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .oheadrow { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .oheadrow h2 { margin: 0; font-size: 18px; }
+  .olist { display: flex; flex-direction: column; gap: 10px; }
+  .ocard { border: 1px solid var(--mist); background: #fff; border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .ocard[aria-current="true"] { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal); }
+  .orow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; justify-content: space-between; }
+  .oname { display: flex; align-items: center; gap: 8px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+  .othumb { width: 30px; height: 30px; flex: none; border-radius: 6px; border: 1px solid var(--mist); background: var(--paper); display: grid; place-items: center; font-size: 13px; color: var(--steel); overflow: hidden; }
+  img.othumb { display: block; object-fit: contain; }
+  .oslug { font-size: 13px; text-align: left; word-break: break-all; }
+  .oswatches { display: inline-flex; gap: 4px; }
+  .osw { width: 14px; height: 14px; border-radius: 50%; border: 1px solid rgba(20,30,35,.18); }
+  .oacts { gap: 6px; justify-content: flex-start; }
+
+  .detail { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .section { padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+  .section h3 { margin: 0; font-size: 17px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .row .grow { flex: 1 1 200px; min-width: 0; }
+  .grid4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+  .grid4 .inline { justify-content: space-between; }
+  .inline { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+  .inline .input { padding: 8px 10px; }
+  h2.title { margin: 0; font-size: 24px; font-stretch: 85%; overflow-wrap: anywhere; }
+  .dlink { word-break: break-all; text-align: left; font-size: 13px; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tab { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 5px 12px; font-size: 14px; cursor: pointer; color: var(--ink); }
+  .tab[aria-pressed="true"] { background: var(--graphite); color: #fff; border-color: var(--graphite); }
+  .empty-state { padding: 30px 16px; text-align: center; color: var(--steel); }
+
+  .colorrow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .colorkey { flex: 1 1 160px; min-width: 0; display: flex; flex-direction: column; }
+  .colorin { width: 46px; height: 36px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: #fff; cursor: pointer; flex: none; }
+  .colortext { flex: 1 1 130px; min-width: 0; padding: 8px 10px; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+  .colorrow .linkbtn { flex: none; font-size: 13px; }
+
+  .logorow { display: flex; gap: 12px; align-items: flex-start; padding-top: 10px; border-top: 1px solid var(--mist); }
+  .logorow:first-child { border-top: 0; padding-top: 0; }
+  .logothumb { width: 64px; height: 64px; flex: none; border: 1px solid var(--mist); border-radius: 8px; background: var(--paper); display: grid; place-items: center; overflow: hidden; }
+  .logothumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .logobody { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .logobody .row .input { padding: 7px 9px; font-size: 14px; flex: 1 1 180px; min-width: 0; }
+
+  .impsec { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--mist); }
+  .impsec:first-child { padding-top: 0; border-top: 0; }
+  .imphead { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 10px; }
+  .impradios { display: flex; flex-direction: column; gap: 2px; }
+  .impradio { align-items: center; gap: 8px; font-size: 14px; }
+  .impradio input { margin-top: 0; }
+  .logogrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
+  .logocand { border: 1px solid var(--mist); background: var(--paper); border-radius: 8px; padding: 6px; height: 68px; display: grid; place-items: center; cursor: pointer; overflow: hidden; }
+  .logocand img { max-width: 100%; max-height: 56px; object-fit: contain; }
+  .logocand:hover { border-color: var(--teal); }
+  .logocand.busy { opacity: .45; pointer-events: none; }
+  .swgrid { display: flex; flex-wrap: wrap; gap: 8px; }
+  .swatchbtn { display: flex; flex-direction: column; align-items: center; gap: 3px; border: 1px solid var(--mist); background: #fff; border-radius: 8px; padding: 5px; cursor: pointer; }
+  .swatchbtn span { width: 34px; height: 22px; border-radius: 4px; display: block; border: 1px solid rgba(20,30,35,.12); }
+  .swatchbtn small { font-size: 10px; color: var(--steel); font-family: ui-monospace, Menlo, monospace; }
+  .swatchbtn:hover { border-color: var(--teal); }
+
+  .prev { border: 1px solid var(--mist); border-radius: 10px; overflow: hidden; font-size: 14px; }
+  .prev-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; }
+  .prev-name { font-size: 17px; font-stretch: 80%; letter-spacing: .02em; }
+  .prev-logo { max-height: 26px; width: auto; }
+  .prev-nav { font-size: 12px; opacity: .85; }
+  .prev-dot { margin: 0 6px; }
+  .prev-body { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px 18px 16px; position: relative; }
+  .prev-h { font-size: 20px; line-height: 1.2; }
+  .prev-sub { opacity: .8; }
+  .prev-btn { display: inline-flex; align-items: center; border: 1px solid transparent; border-radius: 8px; padding: 8px 14px; font-weight: 600; font-size: 13px; }
+  .prev-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; font-size: 12px; }
+  .prev-live { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 4px; background: rgba(255,255,255,.16); }
+  .prev-accent { position: absolute; right: 10px; top: 14px; width: 12px; height: 12px; border-radius: 50%; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap">
+    <a class="brand" href="https://johorstudio.com" aria-label="JohorStudio.com"><span class="brand-name">JohorStudio.com</span></a>
+    <a class="live-home" href="https://live.johorstudio.com">Live home</a>
+    <a class="hlink" href="https://live.johorstudio.com/admin">Events</a>
+    <div class="usermenu"><span id="me"></span></div>
+  </div>
+</header>
+<div id="banners"></div>
+
+<div class="wrap">
+  <div class="pagehead">
+    <h1 class="pagetitle">EVENT ORGANIZER</h1>
+    <p class="small muted" id="pageSub">White-label tenants on ccam.my · one brand per client</p>
+  </div>
+
+  <div id="view" class="layout">
+    <aside class="olistwrap" id="olistwrap">
+      <div class="oheadrow">
+        <h2>Organisers</h2>
+        <button class="btn small" id="newBtn" type="button">+ New event organizer</button>
+      </div>
+      <p class="small muted" style="margin:0" id="olistNote"></p>
+      <div class="olist" id="olist"></div>
+    </aside>
+    <section class="detail" id="detail">
+      <div class="card empty-state">Choose an organiser, or create a new one.</div>
+    </section>
+  </div>
+
+  <div class="card section" id="platCard">
+    <h3>Platform branding</h3>
+    <p class="small muted" style="margin:0">The master brand for the admin/platform host and, when enabled, the ccam.my apex. Tenants override this with their own brand.</p>
+    <div class="tabs" id="platTabs"></div>
+    <div id="platForm"></div>
+  </div>
+</div>
+
+<noscript><p class="wrap small">This page needs JavaScript.</p></noscript>
+
+<script type="module">
+import { $, $$, api, esc, toast, modal, copyText } from '/js/common.js';
+
+const BASE = '/api/admin';
+const ORGS = `${BASE}/organizers`;
+const BRAND_URL = { platform: `${BASE}/brand/platform`, apex: `${BASE}/brand/apex` };
+
+// JohorStudio defaults, used for previews and swatches while a brand field is empty ("inherit").
+const DEFAULT_COLORS = {
+  primary: '#1f6f68', primaryDark: '#174f4a', primaryLight: '#6cc4b9', primarySoft: '#e3f1ef',
+  graphite: '#20272b', ink: '#1d2528', paper: '#f5f7f7', accent: '#d6453d',
+};
+const COLOR_FIELDS = [
+  { k: 'colorPrimary', label: 'Primary', hint: 'buttons, links', def: 'primary' },
+  { k: 'colorPrimaryDark', label: 'Primary dark', hint: 'hover', def: 'primaryDark' },
+  { k: 'colorPrimaryLight', label: 'Primary light', hint: 'highlights, focus', def: 'primaryLight' },
+  { k: 'colorPrimarySoft', label: 'Primary soft', hint: 'tinted panels', def: 'primarySoft' },
+  { k: 'colorGraphite', label: 'Graphite', hint: 'top bar, footer', def: 'graphite' },
+  { k: 'colorInk', label: 'Ink', hint: 'body text', def: 'ink' },
+  { k: 'colorPaper', label: 'Paper', hint: 'page background', def: 'paper' },
+  { k: 'colorAccent', label: 'Accent', hint: 'live badge, alerts', def: 'accent' },
+];
+const LOGO_KINDS = [
+  { k: 'logo', label: 'Logo', hint: 'main logo in the header' },
+  { k: 'logo-dark', label: 'Logo for dark backgrounds', hint: 'optional, dark headers' },
+  { k: 'favicon', label: 'Favicon', hint: 'browser tab icon' },
+];
+
+let zone = 'ccam.my';
+let adminHost = 'live.johorstudio.com';
+let apexMode = 'redirect';
+let disclaimer = 'Servis disediakan oleh JohorStudio.com';
+let orgs = [];
+let cur = null;        // organiser from the server (last known saved state)
+let draft = null;      // editable copy: { name, slug, domain, status, brand }
+let lastReport = null; // last website-import report, kept for the candidate handlers
+// The exact candidate lists rendered last, so data-index buttons always hit the same row.
+let reportLists = { names: [], tags: [], logos: [], fonts: [] };
+const platBrands = { platform: null, apex: null };
+const platErrors = { platform: '', apex: '' };
+let platSet = 'platform';
+
+// ---------------- small helpers ----------------
+const hex = (v) => (/^#[0-9a-f]{6}$/i.test(String(v || '').trim()) ? String(v).trim().toLowerCase() : '');
+const safeMedia = (v) => {
+  const s = String(v || '').trim();
+  return (/^https:\/\/[^\s"'<>]+$/i.test(s) || /^\/[a-z0-9][^\s"'<>]*$/i.test(s)) ? s : '';
+};
+const safeHref = (v) => {
+  const s = String(v || '').trim();
+  return /^https?:\/\/[^\s"'<>]+$/i.test(s) ? s : '';
+};
+const safeFont = (v) => String(v || '').replace(/[^A-Za-z0-9 \-_.]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
+const slugify = (s) => String(s || '').toLowerCase().normalize('NFKD')
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+const when = (ms) => (ms ? new Date(ms).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '');
+const orgUrl = (o) => `https://${(o && o.slug) || ''}.${zone}`;
+const orgHost = (o) => String((o && o.url) || orgUrl(o)).replace(/^https?:\/\//, '');
+const markDirty = () => { const el = $('#edSaved'); if (el) el.textContent = 'Unsaved changes'; };
+function markSaved() {
+  const el = $('#edSaved');
+  if (el) el.textContent = `Saved ${new Date().toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit' })}`;
+}
+function setEdErr(msg) { const el = $('#edErr'); if (el) el.textContent = msg || ''; }
+function busy(btn, on, label) {
+  if (!btn) return;
+  if (on) {
+    if (!btn.dataset.idle) btn.dataset.idle = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = label || 'Working…';
+  } else {
+    btn.disabled = false;
+    if (btn.dataset.idle) { btn.textContent = btn.dataset.idle; delete btn.dataset.idle; }
+  }
+}
+// Readable text colour on a background (same rule as the server's tenant.onColor).
+function onColor(h) {
+  const m = /^#([0-9a-f]{6})$/i.exec(String(h || ''));
+  if (!m) return '#ffffff';
+  const n = parseInt(m[1], 16);
+  const rgb = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+    v /= 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  const lum = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+  return lum > 0.45 ? '#1d2528' : '#ffffff';
+}
+const statusPill = (st) => {
+  if (st === 'live') return '<span class="pill teal">live</span>';
+  if (st === 'off') return '<span class="pill red">off</span>';
+  return '<span class="pill">draft</span>';
+};
+
+// ---------------- list ----------------
+function swatches(b) {
+  const items = [['primary', b && b.colorPrimary], ['accent', b && b.colorAccent], ['graphite', b && b.colorGraphite], ['paper', b && b.colorPaper]];
+  return `<span class="oswatches">${items.map(([k, v]) => `<span class="osw" style="background:${hex(v) || DEFAULT_COLORS[k]}" title="${k}: ${esc(hex(v) || 'default')}"></span>`).join('')}</span>`;
+}
+function orgCard(o) {
+  const logo = safeMedia(o.brand && o.brand.logo);
+  return `<div class="ocard" data-id="${esc(o.id)}" aria-current="${cur && cur.id === o.id ? 'true' : 'false'}">
+    <div class="orow">
+      <div class="oname">
+        ${logo ? `<img class="othumb" src="${esc(logo)}" alt="">` : `<span class="othumb">${esc(String(o.name || '?').slice(0, 1).toUpperCase())}</span>`}
+        <span>${esc(o.name)}</span>
+      </div>
+      ${statusPill(o.status)}
+    </div>
+    <button class="linkbtn oslug" type="button" data-copy="${esc(orgUrl(o))}" title="Click to copy ${esc(orgUrl(o))}">${esc(orgHost(o))}</button>
+    <div class="orow">
+      ${swatches(o.brand)}
+      <span class="small muted">${esc(when(o.updatedAt))}</span>
+    </div>
+    <div class="row oacts">
+      <a class="btn small" href="${esc(safeHref(orgUrl(o)) || '#')}" target="_blank" rel="noopener">Open</a>
+      <button class="btn small ghost" type="button" data-edit="${esc(o.id)}">Edit</button>
+      <button class="btn small ghost" type="button" data-status="${esc(o.id)}">${o.status === 'live' ? 'Turn off' : 'Go live'}</button>
+      <button class="btn small danger" type="button" data-del="${esc(o.id)}">Delete</button>
+    </div>
+  </div>`;
+}
+function renderList() {
+  const note = $('#olistNote');
+  if (note) note.textContent = orgs.length
+    ? `${orgs.length} organiser${orgs.length === 1 ? '' : 's'} on ${zone}`
+    : `No organisers on ${zone} yet.`;
+  const sub = $('#pageSub');
+  if (sub) sub.textContent = `White-label tenants on ${zone} · one brand per client`;
+  const list = $('#olist');
+  if (list) list.innerHTML = orgs.length ? orgs.map(orgCard).join('') : '<p class="small muted" style="margin:0">Create the first organiser to get started.</p>';
+}
+function replaceOrg(org) {
+  if (!org) return;
+  const i = orgs.findIndex((o) => o.id === org.id);
+  if (i >= 0) orgs[i] = org; else orgs.push(org);
+  renderList();
+}
+async function loadList() {
+  const list = $('#olist');
+  if (list) list.innerHTML = '<p class="small muted" style="margin:0">Loading organisers…</p>';
+  try {
+    const d = await api('GET', ORGS);
+    orgs = d.organizers || [];
+    zone = d.zone || zone;
+    adminHost = d.adminHost || adminHost;
+    apexMode = d.apexMode || apexMode;
+    disclaimer = d.disclaimer || disclaimer;
+    renderList();
+    const want = location.hash.slice(1);
+    if (want && orgs.some((o) => o.id === want)) openOrg(want);
+    return true;
+  } catch (e) {
+    if (list) list.innerHTML = `<p class="error">${esc(e.message)}</p><button class="btn small ghost" type="button" id="reloadList">Try again</button>`;
+    const retry = $('#reloadList');
+    if (retry) retry.onclick = () => loadList();
+    toast(e.message, 6000);
+    return false;
+  }
+}
+function onListClick(ev) {
+  const del = ev.target.closest('[data-del]');
+  if (del) { confirmDelete(del.dataset.del); return; }
+  const edit = ev.target.closest('[data-edit]');
+  if (edit) { openOrg(edit.dataset.edit); return; }
+  const st = ev.target.closest('[data-status]');
+  if (st) toggleStatus(st.dataset.status);
+}
+
+async function toggleStatus(id) {
+  const o = orgs.find((x) => x.id === id);
+  if (!o) return;
+  const next = o.status === 'live' ? 'off' : 'live';
+  try {
+    const d = await api('POST', `${ORGS}/${id}/status`, { status: next });
+    replaceOrg(d.organizer);
+    if (cur && cur.id === id) { cur = d.organizer; draft.status = d.organizer.status; syncStatus(); }
+    toast(next === 'live' ? 'Deployed — the organiser is live' : 'Turned off');
+  } catch (e) { toast(e.message, 5000); }
+}
+
+function confirmDelete(id) {
+  const o = orgs.find((x) => x.id === id);
+  if (!o) return;
+  const m = modal(`<h2>Delete ${esc(o.name)}?</h2>
+    <p style="margin:0">This removes the organiser record and frees the slug <b>${esc(o.slug)}.${esc(zone)}</b>. There is no recycle bin. Logo files already on disk are left alone.</p>
+    <p class="error" id="dErr"></p>
+    <div class="row"><button class="btn danger" type="button" id="dGo">Delete organiser</button><button class="btn ghost" type="button" data-close>Cancel</button></div>`);
+  const btn = $('#dGo', m.el);
+  btn.onclick = async () => {
+    busy(btn, true, 'Deleting…');
+    try {
+      await api('DELETE', `${ORGS}/${id}`);
+      m.close();
+      orgs = orgs.filter((x) => x.id !== id);
+      if (cur && cur.id === id) {
+        cur = null; draft = null;
+        $('#detail').innerHTML = '<div class="card empty-state">Organiser deleted.</div>';
+        $('#view').classList.remove('detail-open');
+        history.replaceState(null, '', location.pathname);
+      }
+      renderList();
+      toast('Organiser deleted');
+    } catch (e) { busy(btn, false); $('#dErr', m.el).textContent = e.message; }
+  };
+}
+
+function newOrg() {
+  const m = modal(`<h2>New event organizer</h2>
+    <form id="nf" style="display:flex;flex-direction:column;gap:12px">
+      <div class="field"><label for="nn">Company name</label><input class="input" id="nn" required maxlength="80" autocomplete="organization" placeholder="ABC Events Sdn Bhd"></div>
+      <div class="field"><label for="ns">Subdomain</label>
+        <div class="row" style="flex-wrap:nowrap"><input class="input" id="ns" required maxlength="40" spellcheck="false" placeholder="abc-events" style="flex:1 1 auto;min-width:0"><span class="small muted">.${esc(zone)}</span></div>
+      </div>
+      <div class="field"><label for="ndm">Custom domain <span class="muted">(optional)</span></label><input class="input" id="ndm" spellcheck="false" placeholder="events.abc.com"></div>
+      <p class="error" id="nerr"></p>
+      <div class="row"><button class="btn" type="button" id="nOk">Create</button><button type="button" class="btn ghost" data-close>Cancel</button></div>
+    </form>`);
+  const nn = $('#nn', m.el), ns = $('#ns', m.el), nd = $('#ndm', m.el), err = $('#nerr', m.el), ok = $('#nOk', m.el);
+  let touched = false;
+  nn.oninput = () => { if (!touched) ns.value = slugify(nn.value); };
+  ns.oninput = () => { touched = true; };
+  nn.focus();
+  [nn, ns, nd].forEach((el) => el.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); ok.click(); }
+  }));
+  $('#nf', m.el).onsubmit = (ev) => ev.preventDefault();
+  ok.onclick = async () => {
+    err.textContent = '';
+    busy(ok, true, 'Creating…');
+    try {
+      const d = await api('POST', ORGS, { name: nn.value.trim(), slug: ns.value.trim().toLowerCase(), domain: nd.value.trim() });
+      m.close();
+      replaceOrg(d.organizer);
+      await openOrg(d.organizer.id);
+      toast('Organiser created — add the brand, then press Deploy');
+    } catch (e) { err.textContent = e.message; busy(ok, false); }
+  };
+}
+
+// ---------------- editor ----------------
+function fromOrg(org) {
+  return {
+    name: org.name || '', slug: org.slug || '', domain: org.domain || '', status: org.status || 'draft',
+    brand: { ...(org.brand || {}) },
+  };
+}
+async function openOrg(id) {
+  let o;
+  try { o = (await api('GET', `${ORGS}/${id}`)).organizer; }
+  catch (e) { toast(e.message, 5000); return; }
+  cur = o;
+  draft = fromOrg(o);
+  lastReport = null;
+  renderEditor();
+  replaceOrg(o);
+  $('#view').classList.add('detail-open');
+  history.replaceState(null, '', `#${id}`);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function renderEditor() {
+  const b = draft.brand || {};
+  const url = orgUrl({ slug: draft.slug });
+  $('#detail').innerHTML = `
+    <button class="btn ghost small back" id="backBtn" type="button">← All organisers</button>
+
+    <div class="card section">
+      <div class="orow" style="justify-content:space-between">
+        <div style="min-width:0">
+          <div class="small muted">EVENT ORGANIZER</div>
+          <h2 class="title" id="edTitle">${esc(draft.name || '(unnamed)')}</h2>
+          <button class="linkbtn dlink" id="edUrl" type="button" data-copy="${esc(url)}" title="Click to copy ${esc(url)}">${esc(orgHost({ url }))}</button>
+        </div>
+        <span id="edPill">${statusPill(draft.status)}</span>
+      </div>
+      <div class="row">
+        <button class="btn" id="edSave" type="button">Save</button>
+        <button class="btn ghost" id="edCopy" type="button">Copy URL</button>
+        <a class="btn ghost" id="edOpen" href="${esc(safeHref(url) || '#')}" target="_blank" rel="noopener">Open site</a>
+        <span class="small muted" id="edSaved"></span>
+      </div>
+      <p class="error" id="edErr"></p>
+    </div>
+
+    <div class="card section">
+      <h3>Details</h3>
+      <div class="grid4">
+        <label class="inline">Company name<input class="input" id="fName" maxlength="80" value="${esc(draft.name)}" spellcheck="false"></label>
+        <label class="inline">Slug<input class="input" id="fSlug" maxlength="40" value="${esc(draft.slug)}" spellcheck="false"></label>
+        <label class="inline">Status<select class="input" id="fStatus">
+          <option value="draft"${draft.status === 'draft' ? ' selected' : ''}>Draft</option>
+          <option value="live"${draft.status === 'live' ? ' selected' : ''}>Live</option>
+          <option value="off"${draft.status === 'off' ? ' selected' : ''}>Off</option>
+        </select></label>
+      </div>
+      <label class="inline">Custom domain <span class="small muted">(optional, comma separated)</span><input class="input" id="fDomain" value="${esc(draft.domain)}" spellcheck="false" placeholder="events.client.com"></label>
+      <div class="row">
+        <span class="pill" id="slugPreview">${esc(draft.slug || 'slug')}.${esc(zone)}</span>
+        <button class="btn small" id="edDeploy" type="button">Deploy (go live)</button>
+        <button class="btn small ghost" id="edOff" type="button">Turn off</button>
+      </div>
+      <p class="small muted" style="margin:0">Deploy = status live. The wildcard DNS (<b>*.${esc(zone)}</b>) and the one Cloudflare tunnel hostname are set up once; after that, on/off here is all it takes.</p>
+    </div>
+
+    <div class="card section">
+      <h3>Import branding from a website</h3>
+      <div class="row">
+        <input class="input grow" id="fImpUrl" type="url" placeholder="https://client-website.com" spellcheck="false">
+        <button class="btn" id="impRead" type="button">Read website</button>
+        <button class="btn ghost" id="impAll" type="button" disabled>Apply all suggestions</button>
+      </div>
+      <p class="small muted" style="margin:0">The server fetches the page over <b>https</b> only and can take a few seconds. Importing fills only the fields that are still empty, so your own edits win.</p>
+      <div id="edImpRes"></div>
+    </div>
+
+    <div class="card section">
+      <h3>Logos</h3>
+      <div id="edLogos"></div>
+      <p class="small muted" style="margin:0">PNG, JPEG, WebP, SVG, GIF or ICO · up to 4 MB.</p>
+    </div>
+
+    <div class="card section">
+      <h3>Colours</h3>
+      <div id="edColors"></div>
+      <p class="small muted" style="margin:0">Empty = inherit the JohorStudio.com default. Changing the primary colour is usually enough.</p>
+    </div>
+
+    <div class="card section">
+      <h3>Name &amp; copy</h3>
+      <div class="grid4">
+        <label class="inline">Display name<input class="input" id="fBrandName" maxlength="80" value="${esc(b.name || '')}" spellcheck="false"></label>
+        <label class="inline">Short name<input class="input" id="fShort" maxlength="40" value="${esc(b.shortName || '')}" placeholder="ABC" spellcheck="false"></label>
+        <label class="inline">Website<input class="input" id="fWebsite" type="url" spellcheck="false" value="${esc(b.website || '')}" placeholder="https://client.com"></label>
+        <label class="inline">WhatsApp<input class="input" id="fWa" spellcheck="false" value="${esc(b.whatsapp || '')}" placeholder="60123456789"></label>
+        <label class="inline">Contact link<input class="input" id="fContact" type="url" spellcheck="false" value="${esc(b.contactUrl || '')}" placeholder="https://client.com/contact"></label>
+      </div>
+      <label class="inline">Tagline<input class="input" id="fTagline" maxlength="160" value="${esc(b.tagline || '')}" placeholder="Official photographer for your event"></label>
+      <label class="inline">Hero headline<input class="input" id="fHeroH" maxlength="120" value="${esc(b.heroHeadline || '')}" placeholder="Your event, live on the big screen"></label>
+      <label class="inline">Hero subline<input class="input" id="fHeroS" maxlength="200" value="${esc(b.heroSub || '')}" placeholder="Guests upload photos from their phone."></label>
+      <label class="inline">Footer disclaimer<input class="input" id="fDisc" maxlength="200" value="${esc(b.disclaimer || '')}" placeholder="${esc(disclaimer)}"></label>
+      <label class="check"><input type="checkbox" id="fHide"${b.hidePlatformLinks ? ' checked' : ''}><span>Hide platform links on the tenant site (JohorStudio.com links and the "Live home" button)</span></label>
+    </div>
+
+    <div class="card section">
+      <h3>Font</h3>
+      <div class="grid4">
+        <label class="inline">Font family<input class="input" id="fFont" maxlength="60" value="${esc(b.font || '')}" placeholder="Archivo" spellcheck="false"></label>
+        <label class="inline">Google Fonts URL<input class="input" id="fFontUrl" type="url" spellcheck="false" value="${esc(b.fontUrl || '')}" placeholder="https://fonts.googleapis.com/css2?family=Inter"></label>
+      </div>
+      <p class="small muted" style="margin:0">The font loads on the tenant site only. Leave empty to use Archivo. The preview below uses it if your computer already has the font.</p>
+    </div>
+
+    <div class="card section">
+      <h3>Preview</h3>
+      <div id="edPrev"></div>
+      <p class="small muted" style="margin:0">Approximate: on the live site these colours drive the header, buttons, links and footer.</p>
+    </div>
+
+    <div class="row">
+      <button class="btn" id="edSave2" type="button">Save changes</button>
+      <span class="small muted">Nothing on the tenant site changes until you press Save.</span>
+    </div>
+  `;
+  renderLogos();
+  renderColors();
+  bindEditor();
+  updatePreview();
+  syncUrl();
+}
+
+function syncUrl() {
+  const url = orgUrl({ slug: draft.slug });
+  const link = $('#edUrl');
+  if (link) { link.dataset.copy = url; link.textContent = orgHost({ url }); link.title = `Click to copy ${url}`; }
+  const open = $('#edOpen');
+  if (open) open.href = safeHref(url) || '#';
+  const prev = $('#slugPreview');
+  if (prev) prev.textContent = `${draft.slug || 'slug'}.${zone}`;
+}
+function syncStatus() {
+  const sel = $('#fStatus');
+  if (sel) sel.value = draft.status;
+  const pill = $('#edPill');
+  if (pill) pill.innerHTML = statusPill(draft.status);
+  const title = $('#edTitle');
+  if (title) title.textContent = draft.name || '(unnamed)';
+  syncUrl();
+}
+
+function bindEditor() {
+  const back = $('#backBtn');
+  if (back) back.onclick = () => { $('#view').classList.remove('detail-open'); history.replaceState(null, '', location.pathname); };
+  const copy = $('#edCopy');
+  if (copy) copy.onclick = () => copyText(orgUrl({ slug: draft.slug }));
+  const save = $('#edSave');
+  if (save) save.onclick = () => saveOrg();
+  const save2 = $('#edSave2');
+  if (save2) save2.onclick = () => saveOrg();
+  const dep = $('#edDeploy');
+  if (dep) dep.onclick = () => changeStatus('live');
+  const off = $('#edOff');
+  if (off) off.onclick = () => changeStatus('off');
+  const read = $('#impRead');
+  if (read) read.onclick = () => readWebsite();
+  const all = $('#impAll');
+  if (all) all.onclick = () => applyAll();
+
+  const field = (sel, apply) => {
+    const el = $(sel);
+    if (!el) return;
+    el.oninput = () => { apply(el.value); markDirty(); syncUrl(); updatePreview(); };
+  };
+  field('#fName', (v) => {
+    draft.name = v;
+    const title = $('#edTitle');
+    if (title) title.textContent = v || '(unnamed)';
+  });
+  field('#fSlug', (v) => {
+    draft.slug = String(v).toLowerCase();
+    const inp = $('#fSlug');
+    if (inp && inp.value !== draft.slug) inp.value = draft.slug;
+  });
+  field('#fDomain', (v) => { draft.domain = v; });
+  field('#fBrandName', (v) => { draft.brand.name = v; });
+  field('#fShort', (v) => { draft.brand.shortName = v; });
+  field('#fTagline', (v) => { draft.brand.tagline = v; });
+  field('#fHeroH', (v) => { draft.brand.heroHeadline = v; });
+  field('#fHeroS', (v) => { draft.brand.heroSub = v; });
+  field('#fWebsite', (v) => { draft.brand.website = v; });
+  field('#fWa', (v) => { draft.brand.whatsapp = v; });
+  field('#fContact', (v) => { draft.brand.contactUrl = v; });
+  field('#fDisc', (v) => { draft.brand.disclaimer = v; });
+  field('#fFont', (v) => { draft.brand.font = v; });
+  field('#fFontUrl', (v) => { draft.brand.fontUrl = v; });
+
+  const status = $('#fStatus');
+  if (status) status.onchange = () => { draft.status = status.value; markDirty(); syncStatus(); };
+  const hide = $('#fHide');
+  if (hide) hide.onchange = () => { draft.brand.hidePlatformLinks = !!hide.checked; markDirty(); updatePreview(); };
+}
+
+async function saveOrg(silent) {
+  if (!cur || !draft) return false;
+  const btn = $('#edSave');
+  try {
+    const name = String(draft.name || '').trim();
+    const slug = String(draft.slug || '').trim().toLowerCase();
+    if (!name) throw new Error('Company name is required');
+    if (!/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/.test(slug)) throw new Error('Slug must be 2–40 characters: a-z, 0-9 or "-"');
+    setEdErr('');
+    busy(btn, true, 'Saving…');
+    const d = await api('PUT', `${ORGS}/${cur.id}`, {
+      name, slug, domain: String(draft.domain || '').trim(), status: draft.status, brand: draft.brand,
+    });
+    cur = d.organizer;
+    draft.name = cur.name;
+    draft.slug = cur.slug;
+    draft.domain = cur.domain;
+    draft.status = cur.status;
+    const slugEl = $('#fSlug');
+    if (slugEl) slugEl.value = cur.slug;
+    const domainEl = $('#fDomain');
+    if (domainEl) domainEl.value = cur.domain;
+    const nameEl = $('#fName');
+    if (nameEl) nameEl.value = cur.name;
+    syncStatus();
+    replaceOrg(cur);
+    markSaved();
+    if (!silent) toast('Saved');
+    return true;
+  } catch (e) {
+    setEdErr(e.message);
+    if (!silent) toast(e.message, 5000);
+    return false;
+  } finally {
+    busy(btn, false);
+  }
+}
+
+async function changeStatus(status) {
+  if (!cur || !draft) return;
+  const prev = draft.status;
+  draft.status = status;
+  syncStatus();
+  const ok = await saveOrg(true);
+  if (!ok) { draft.status = prev; syncStatus(); return; }
+  toast(status === 'live' ? 'Deployed — the organiser is live' : 'Turned off');
+}
+
+// ---------------- logos ----------------
+function renderLogos() {
+  const wrap = $('#edLogos');
+  if (!wrap) return;
+  wrap.innerHTML = LOGO_KINDS.map((f) => {
+    const src = safeMedia(draft.brand[f.k]);
+    return `<div class="logorow">
+      <div class="logothumb">${src ? `<img src="${esc(src)}" alt="${esc(f.label)}">` : '<span class="small muted">none</span>'}</div>
+      <div class="logobody">
+        <b>${esc(f.label)}</b>
+        <span class="small muted">${esc(f.hint)}</span>
+        <div class="row">
+          <button class="btn small" type="button" data-upload="${esc(f.k)}">Upload file</button>
+          <input type="file" class="hidden" id="file-${esc(f.k)}" accept="image/png,image/jpeg,image/webp,image/svg+xml,image/gif,image/x-icon,.ico">
+          <input class="input" data-lurl="${esc(f.k)}" placeholder="https://client.com/logo.png" spellcheck="false">
+          <button class="btn small ghost" type="button" data-url="${esc(f.k)}">Use URL</button>
+          <button class="btn small ghost" type="button" data-rm="${esc(f.k)}"${src ? '' : ' disabled'}>Remove</button>
+        </div>
+        <p class="error" data-err="${esc(f.k)}"></p>
+      </div>
+    </div>`;
+  }).join('');
+  bindLogos();
+}
+function bindLogos() {
+  $$('#edLogos [data-upload]').forEach((b) => {
+    b.onclick = () => {
+      const inp = $(`#edLogos #file-${b.dataset.upload}`);
+      if (inp) inp.click();
+    };
+  });
+  $$('#edLogos input[type=file]').forEach((inp) => {
+    inp.onchange = async () => {
+      const file = inp.files && inp.files[0];
+      inp.value = '';
+      if (file) await uploadLogo(inp.id.replace(/^file-/, ''), file);
+    };
+  });
+  $$('#edLogos [data-url]').forEach((b) => {
+    b.onclick = () => {
+      const kind = b.dataset.url;
+      const inp = $(`#edLogos [data-lurl="${kind}"]`);
+      logoFromUrl(kind, inp ? inp.value.trim() : '');
+    };
+  });
+  $$('#edLogos [data-rm]').forEach((b) => { b.onclick = () => removeLogo(b.dataset.rm); });
+}
+function setLogoErr(kind, msg) {
+  const line = $(`#edLogos [data-err="${kind}"]`);
+  if (line) line.textContent = msg || '';
+  else if (msg) toast(msg, 5000);
+}
+async function uploadLogo(kind, file) {
+  setLogoErr(kind, '');
+  if (!file) return;
+  if (file.size > 4 * 1024 * 1024) { setLogoErr(kind, 'That file is larger than 4 MB.'); return; }
+  try {
+    const r = await fetch(`${ORGS}/${cur.id}/logo`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': file.type || 'application/octet-stream', 'x-kind': kind },
+      body: file,
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || `Upload failed (${r.status})`);
+    mergeBrandFromServer(d.organizer);
+    toast('Logo uploaded');
+  } catch (e) { setLogoErr(kind, e.message); }
+}
+async function logoFromUrl(kind, url) {
+  setLogoErr(kind, '');
+  if (!/^https:\/\//i.test(url)) { setLogoErr(kind, 'The server can only download https URLs.'); return; }
+  try {
+    const d = await api('POST', `${ORGS}/${cur.id}/logo-from-url`, { url, kind });
+    mergeBrandFromServer(d.organizer);
+    toast('Logo set from that URL');
+  } catch (e) { setLogoErr(kind, e.message); }
+}
+async function removeLogo(kind) {
+  setLogoErr(kind, '');
+  try {
+    const d = await api('DELETE', `${ORGS}/${cur.id}/logo/${kind}`);
+    mergeBrandFromServer(d.organizer);
+    toast('Logo removed');
+  } catch (e) { setLogoErr(kind, e.message); }
+}
+// A logo call returns the saved organiser: refresh only the logo fields, keep unsaved edits.
+function mergeBrandFromServer(org) {
+  if (!org) return;
+  cur = org;
+  for (const k of ['logo', 'logoDark', 'favicon']) if (k in (org.brand || {})) draft.brand[k] = org.brand[k];
+  replaceOrg(org);
+  renderLogos();
+  updatePreview();
+  markDirty();
+}
+
+// ---------------- colours ----------------
+function renderColors() {
+  const wrap = $('#edColors');
+  if (!wrap) return;
+  wrap.innerHTML = COLOR_FIELDS.map((f) => {
+    const raw = String((draft.brand && draft.brand[f.k]) || '');
+    const eff = hex(raw) || DEFAULT_COLORS[f.def];
+    return `<div class="colorrow">
+      <div class="colorkey"><b>${esc(f.label)}</b><span class="small muted">${esc(f.hint)}</span></div>
+      <input type="color" class="colorin" data-color="${esc(f.k)}" value="${eff}" aria-label="${esc(f.label)}">
+      <input class="input colortext" data-hex="${esc(f.k)}" value="${esc(raw)}" placeholder="${DEFAULT_COLORS[f.def]}" spellcheck="false" aria-label="${esc(f.label)} hex">
+      <button class="linkbtn" type="button" data-reset="${esc(f.k)}">reset</button>
+    </div>`;
+  }).join('');
+  bindColors();
+}
+function bindColors() {
+  $$('#edColors [data-color]').forEach((inp) => {
+    inp.oninput = () => {
+      const k = inp.dataset.color;
+      draft.brand[k] = inp.value;
+      const text = $(`#edColors [data-hex="${k}"]`);
+      if (text) text.value = inp.value;
+      markDirty();
+      updatePreview();
+    };
+  });
+  $$('#edColors [data-hex]').forEach((inp) => {
+    const k = inp.dataset.hex;
+    inp.oninput = () => {
+      const v = hex(inp.value);
+      if (!v) return;
+      draft.brand[k] = v;
+      const pick = $(`#edColors [data-color="${k}"]`);
+      if (pick) pick.value = v;
+      markDirty();
+      updatePreview();
+    };
+    inp.onblur = () => {
+      const v = String(inp.value || '').trim();
+      if (v && !hex(v)) { toast('Use a hex colour like #1f6f68', 4000); inp.value = String(draft.brand[k] || ''); }
+    };
+  });
+  $$('#edColors [data-reset]').forEach((btn) => {
+    btn.onclick = () => {
+      draft.brand[btn.dataset.reset] = '';
+      renderColors();
+      markDirty();
+      updatePreview();
+    };
+  });
+}
+
+// ---------------- website import ----------------
+function renderReport() {
+  const out = $('#edImpRes');
+  if (!out) return;
+  const r = lastReport;
+  const all = $('#impAll');
+  if (all) all.disabled = !r;
+  if (!r) { reportLists = { names: [], tags: [], logos: [], fonts: [] }; out.innerHTML = ''; return; }
+
+  const names = (r.nameCandidates || []).filter((c) => c && c.value).slice(0, 6);
+  const tags = (r.taglineCandidates || []).filter((c) => c && c.value).slice(0, 5);
+  let logos = (r.logoCandidates || []).filter((c) => c && /^https:\/\//i.test(c.url || '')).slice(0, 10);
+  if (!logos.length && /^https:\/\//i.test(r.ogImage || '')) logos = [{ url: r.ogImage, from: 'og:image' }];
+  const colors = (r.colors || []).filter((c) => c && hex(c.hex)).slice(0, 12);
+  const sug = r.suggestedColors || {};
+  const fonts = (r.fonts || []).filter((f) => f && f.name).slice(0, 6);
+  const sources = (r.sources || []).map((s) => s && s.from).filter(Boolean).slice(0, 6);
+  reportLists = { names, tags, logos, fonts };
+
+  out.innerHTML = `
+    <div class="impsec">
+      <div class="imphead"><b>Name</b><span class="small muted">${esc(r.finalUrl || r.url || '')}</span></div>
+      ${names.length ? `<div class="impradios">${names.map((c, i) => `<label class="check impradio">
+        <input type="radio" name="impName" value="${i}"${draft.name === c.value ? ' checked' : ''}>
+        <span>${esc(c.value)} <span class="small muted">· ${esc(c.from || '')}</span></span></label>`).join('')}</div>`
+        : '<p class="small muted" style="margin:0">No name candidates found — type the name in Details.</p>'}
+    </div>
+
+    <div class="impsec">
+      <div class="imphead"><b>Tagline</b></div>
+      ${tags.length ? `<div class="row">${tags.map((c, i) => `<button class="btn small ghost" type="button" data-tag="${i}">${esc(c.value)}</button>`).join('')}</div>`
+        : '<p class="small muted" style="margin:0">No tagline found — type one under Name &amp; copy.</p>'}
+      ${r.description ? `<p class="small muted" style="margin:0"><b>Description:</b> ${esc(r.description)}</p>` : ''}
+    </div>
+
+    <div class="impsec">
+      <div class="imphead"><b>Logo candidates</b><span class="small muted">click one to download it</span></div>
+      ${logos.length ? `<div class="logogrid">${logos.map((c, i) => `<button class="logocand" type="button" data-logo="${i}" title="${esc(c.from || '')} ${esc(c.url)}"><img src="${esc(c.url)}" alt="" loading="lazy" referrerpolicy="no-referrer"></button>`).join('')}</div>`
+        : '<p class="small muted" style="margin:0">No logo images found — upload one in the Logos section.</p>'}
+    </div>
+
+    <div class="impsec">
+      <div class="imphead"><b>Colours</b><span class="small muted">click a swatch to apply it</span></div>
+      <div class="row">
+        <label class="inline" style="flex:0 1 220px">Apply to<select class="input" id="impSlot">
+          <option value="colorPrimary">Primary</option>
+          <option value="colorAccent">Accent</option>
+          <option value="colorGraphite">Graphite (header)</option>
+          <option value="colorPaper">Paper (background)</option>
+        </select></label>
+        ${sug.primary ? `<button class="btn small ghost" type="button" data-sug="primary">Suggested primary ${esc(sug.primary)}</button>` : ''}
+        ${sug.accent ? `<button class="btn small ghost" type="button" data-sug="accent">Suggested accent ${esc(sug.accent)}</button>` : ''}
+      </div>
+      ${colors.length ? `<div class="swgrid">${colors.map((c) => `<button class="swatchbtn" type="button" data-hexval="${esc(c.hex)}" title="${esc(c.hex)} · used ${esc(c.count)}×"><span style="background:${esc(c.hex)}"></span><small>${esc(c.hex)}</small></button>`).join('')}</div>`
+        : '<p class="small muted" style="margin:0">No colours found.</p>'}
+      ${(sug.palette || []).length ? `<div class="small muted">Suggested palette: ${(sug.palette || []).map((h) => esc(h)).join(' · ')}</div>` : ''}
+    </div>
+
+    <div class="impsec">
+      <div class="imphead"><b>Font</b></div>
+      ${fonts.length ? `<div class="row">${fonts.map((f, i) => `<button class="btn small ghost" type="button" data-font="${i}">${esc(f.name)}${f.count ? ` <span class="small muted">· ${esc(f.count)}</span>` : ''}</button>`).join('')}</div>`
+        : '<p class="small muted" style="margin:0">No font found.</p>'}
+      ${r.fontUrl ? `<p class="small muted" style="margin:0;overflow-wrap:anywhere">Google Fonts: ${esc(r.fontUrl)}</p>` : ''}
+    </div>
+
+    ${sources.length ? `<p class="small muted" style="margin:0">Read from: ${sources.map((s) => esc(s)).join(' · ')}</p>` : ''}
+  `;
+  bindReport();
+}
+function bindReport() {
+  const r = lastReport;
+  if (!r) return;
+  $$('#edImpRes input[name="impName"]').forEach((inp) => {
+    inp.onchange = () => {
+      const c = reportLists.names[Number(inp.value)];
+      if (!c || !c.value) return;
+      draft.name = c.value;
+      draft.brand.name = c.value;
+      const nameEl = $('#fName');
+      if (nameEl) nameEl.value = c.value;
+      const brandEl = $('#fBrandName');
+      if (brandEl) brandEl.value = c.value;
+      const title = $('#edTitle');
+      if (title) title.textContent = c.value;
+      markDirty();
+      updatePreview();
+    };
+  });
+  $$('#edImpRes [data-tag]').forEach((b) => {
+    b.onclick = () => {
+      const c = reportLists.tags[Number(b.dataset.tag)];
+      if (!c || !c.value) return;
+      draft.brand.tagline = c.value;
+      const el = $('#fTagline');
+      if (el) el.value = c.value;
+      markDirty();
+      updatePreview();
+    };
+  });
+  $$('#edImpRes [data-logo]').forEach((b) => { b.onclick = () => pickLogo(Number(b.dataset.logo)); });
+  $$('#edImpRes [data-hexval]').forEach((b) => { b.onclick = () => applyColor(b.dataset.hexval); });
+  $$('#edImpRes [data-sug]').forEach((b) => {
+    b.onclick = () => {
+      const key = b.dataset.sug; // 'primary' | 'accent' — these buttons name their own slot
+      const v = hex((r.suggestedColors || {})[key]);
+      if (!v) return;
+      const slot = key === 'accent' ? 'colorAccent' : 'colorPrimary';
+      draft.brand[slot] = v;
+      renderColors();
+      updatePreview();
+      markDirty();
+      toast(`${v} set as ${key}`);
+    };
+  });
+  $$('#edImpRes [data-font]').forEach((b) => { b.onclick = () => applyFont(Number(b.dataset.font)); });
+}
+function applyColor(value) {
+  const v = hex(value);
+  if (!v) return;
+  const slotEl = $('#impSlot');
+  const slot = (slotEl && slotEl.value) || 'colorPrimary';
+  draft.brand[slot] = v;
+  renderColors();
+  updatePreview();
+  markDirty();
+  toast(`${v} set as ${slot.replace('color', '').toLowerCase()}`);
+}
+function applyFont(i) {
+  const r = lastReport;
+  if (!r) return;
+  const f = reportLists.fonts[i];
+  if (!f || !f.name) return;
+  draft.brand.font = f.name;
+  if (r.fontUrl) draft.brand.fontUrl = r.fontUrl;
+  const nameEl = $('#fFont');
+  if (nameEl) nameEl.value = f.name;
+  const urlEl = $('#fFontUrl');
+  if (urlEl && r.fontUrl) urlEl.value = r.fontUrl;
+  markDirty();
+  updatePreview();
+  toast(`Font: ${f.name}`);
+}
+async function pickLogo(i) {
+  const r = lastReport;
+  if (!r) return;
+  const c = reportLists.logos[i];
+  if (!c || !/^https:\/\//i.test(c.url || '')) { toast('That candidate is not an https image', 4000); return; }
+  const btn = $(`#edImpRes [data-logo="${i}"]`);
+  if (btn) btn.classList.add('busy');
+  try {
+    const d = await api('POST', `${ORGS}/${cur.id}/logo-from-url`, { url: c.url, kind: 'logo' });
+    mergeBrandFromServer(d.organizer);
+    toast('Logo downloaded');
+  } catch (e) { toast(e.message, 5000); }
+  if (btn) btn.classList.remove('busy');
+}
+async function readWebsite() {
+  const out = $('#edImpRes');
+  const urlEl = $('#fImpUrl');
+  const url = urlEl ? urlEl.value.trim() : '';
+  if (!/^https:\/\//i.test(url)) {
+    if (out) out.innerHTML = '<p class="error" style="margin:0">Enter an https:// address — the server only fetches https.</p>';
+    return;
+  }
+  const btn = $('#impRead');
+  busy(btn, true, 'Reading…');
+  if (out) out.innerHTML = '<p class="small muted" style="margin:0">Reading the site… this can take a few seconds.</p>';
+  try {
+    const d = await api('POST', `${ORGS}/${cur.id}/import`, { url });
+    lastReport = d.report || null;
+    renderReport();
+  } catch (e) {
+    lastReport = null;
+    if (out) out.innerHTML = `<p class="error" style="margin:0">${esc(e.message)}</p>`;
+    const all = $('#impAll');
+    if (all) all.disabled = true;
+  } finally {
+    busy(btn, false);
+  }
+}
+async function applyAll() {
+  if (!lastReport) return;
+  const urlEl = $('#fImpUrl');
+  const url = urlEl ? urlEl.value.trim() : '';
+  const btn = $('#impAll');
+  setEdErr('');
+  busy(btn, true, 'Applying…');
+  try {
+    const saved = await saveOrg(true);
+    if (!saved) throw new Error('Fix the fields marked above before importing');
+    const d = await api('POST', `${ORGS}/${cur.id}/import`, { url, apply: true });
+    if (d.organizer) {
+      cur = d.organizer;
+      draft = fromOrg(cur);
+      lastReport = d.report || lastReport;
+      renderEditor();
+      const input = $('#fImpUrl');
+      if (input) input.value = url;
+      renderReport();
+      replaceOrg(cur);
+      markSaved();
+    }
+    toast('Suggestions applied — review and save');
+  } catch (e) {
+    setEdErr(e.message);
+    toast(e.message, 5000);
+  } finally {
+    busy(btn, false);
+    const all = $('#impAll');
+    if (all) all.disabled = !lastReport;
+  }
+}
+
+// ---------------- live preview ----------------
+function updatePreview() {
+  const el = $('#edPrev');
+  if (!el || !draft) return;
+  const b = draft.brand || {};
+  const primary = hex(b.colorPrimary) || DEFAULT_COLORS.primary;
+  const graphite = hex(b.colorGraphite) || DEFAULT_COLORS.graphite;
+  const paper = hex(b.colorPaper) || DEFAULT_COLORS.paper;
+  const ink = hex(b.colorInk) || DEFAULT_COLORS.ink;
+  const accent = hex(b.colorAccent) || DEFAULT_COLORS.accent;
+  const soft = hex(b.colorPrimarySoft) || DEFAULT_COLORS.primarySoft;
+  const name = b.name || draft.name || 'Your brand';
+  const logo = safeMedia(b.logo);
+  const font = safeFont(b.font);
+  const headline = b.heroHeadline || name;
+  const sub = b.heroSub || b.tagline || 'Photos from your event, live on the big screen.';
+  const disc = b.disclaimer || disclaimer;
+  el.innerHTML = `<div class="prev"${font ? ` style="font-family:${font}, Archivo, system-ui, sans-serif"` : ''}>
+    <div class="prev-head" style="background:${graphite};color:${onColor(graphite)}">
+      ${logo ? `<img class="prev-logo" src="${esc(logo)}" alt="${esc(name)}">` : `<b class="prev-name">${esc(name)}</b>`}
+      <span class="prev-nav">Events<span class="prev-dot">·</span>Gallery</span>
+    </div>
+    <div class="prev-body" style="background:${paper};color:${ink}">
+      <span class="prev-accent" style="background:${accent}"></span>
+      <b class="prev-h">${esc(headline)}</b>
+      <span class="prev-sub">${esc(sub)}</span>
+      <span class="row" style="gap:8px">
+        <span class="prev-btn" style="background:${primary};color:${onColor(primary)}">Upload your photos</span>
+        <span class="prev-btn" style="background:${soft};color:${onColor(soft)};border-color:${primary}">View gallery</span>
+      </span>
+    </div>
+    <div class="prev-foot" style="background:${graphite};color:${onColor(graphite)}">
+      <span>${esc(disc)}</span>
+      ${b.hidePlatformLinks ? '' : '<span class="prev-live">Live home</span>'}
+    </div>
+  </div>`;
+}
+
+// ---------------- platform branding ----------------
+async function loadPlatform() {
+  const form = $('#platForm');
+  if (form) form.innerHTML = '<p class="small muted" style="margin:0">Loading platform brand…</p>';
+  platErrors.platform = '';
+  platErrors.apex = '';
+  try {
+    const p = await api('GET', BRAND_URL.platform);
+    platBrands.platform = p.brand || {};
+    zone = p.zone || zone;
+    adminHost = p.adminHost || adminHost;
+    apexMode = p.apexMode || apexMode;
+  } catch (e) { platErrors.platform = e.message; }
+  try {
+    const a = await api('GET', BRAND_URL.apex);
+    platBrands.apex = a.brand || {};
+  } catch (e) { platErrors.apex = e.message; }
+  renderPlatform();
+}
+function renderPlatform() {
+  const b = platBrands[platSet] || {};
+  const tabs = $('#platTabs');
+  if (tabs) {
+    tabs.innerHTML = [['platform', `live.johorstudio.com`], ['apex', `${zone} apex`]]
+      .map(([k, l]) => `<button class="tab" type="button" data-plat="${k}" aria-pressed="${platSet === k}">${esc(l)}</button>`).join('');
+    $$('#platTabs [data-plat]').forEach((btn) => {
+      btn.onclick = () => { platSet = btn.dataset.plat; renderPlatform(); };
+    });
+  }
+  const form = $('#platForm');
+  if (!form) return;
+  const err = platErrors[platSet];
+  if (err) {
+    form.innerHTML = `<p class="error" style="margin:0">${esc(err)}</p><div class="row"><button class="btn small ghost" type="button" id="platRetry">Try again</button></div>`;
+    const retry = $('#platRetry');
+    if (retry) retry.onclick = () => loadPlatform();
+    return;
+  }
+  form.innerHTML = `<div class="grid4">
+      <label class="inline">Name<input class="input" data-pb="name" maxlength="80" value="${esc(b.name || '')}" spellcheck="false"></label>
+      <label class="inline">Short name<input class="input" data-pb="shortName" maxlength="40" value="${esc(b.shortName || '')}" spellcheck="false"></label>
+      <label class="inline">Tagline<input class="input" data-pb="tagline" maxlength="120" value="${esc(b.tagline || '')}"></label>
+      <label class="inline">Logo URL<input class="input" data-pb="logo" value="${esc(b.logo || '')}" placeholder="https://…/logo.png" spellcheck="false"></label>
+      <label class="inline">Primary colour<input class="input" data-pb="colorPrimary" value="${esc(b.colorPrimary || '')}" placeholder="#1f6f68" spellcheck="false"></label>
+      <label class="inline">Accent colour<input class="input" data-pb="colorAccent" value="${esc(b.colorAccent || '')}" placeholder="#d6453d" spellcheck="false"></label>
+      <label class="inline">Website<input class="input" data-pb="website" type="url" value="${esc(b.website || '')}" placeholder="https://johorstudio.com" spellcheck="false"></label>
+      <label class="inline">WhatsApp<input class="input" data-pb="whatsapp" value="${esc(b.whatsapp || '')}" placeholder="60123456789" spellcheck="false"></label>
+    </div>
+    <label class="inline">Footer disclaimer<input class="input" data-pb="disclaimer" maxlength="200" value="${esc(b.disclaimer || '')}" placeholder="${esc(disclaimer)}"></label>
+    <label class="check"><input type="checkbox" data-pb="hidePlatformLinks"${b.hidePlatformLinks ? ' checked' : ''}><span>Hide platform links (JohorStudio.com links and the "Live home" button)</span></label>
+    <div class="row">
+      <button class="btn" type="button" id="platSave">Save ${platSet === 'apex' ? 'apex brand' : 'platform brand'}</button>
+      <span class="small muted" id="platSaved"></span>
+    </div>
+    <p class="small muted" style="margin:0">${platSet === 'apex'
+      ? `APEX_MODE=${esc(apexMode)} — ${apexMode === 'app' ? `the apex serves this brand.` : 'ccam.my redirects to the live home, so this brand is only used when APEX_MODE=app.'}`
+      : `Shown on ${esc(adminHost)} and johorstudio.com unless a tenant brand overrides it.`}</p>`;
+  const save = $('#platSave');
+  if (save) save.onclick = () => savePlatform(save);
+}
+async function savePlatform(btn) {
+  const brand = { ...(platBrands[platSet] || {}) };
+  $$('#platForm [data-pb]').forEach((el) => {
+    brand[el.dataset.pb] = el.type === 'checkbox' ? el.checked : el.value.trim();
+  });
+  busy(btn, true, 'Saving…');
+  try {
+    const d = await api('PUT', BRAND_URL[platSet], { brand });
+    platBrands[platSet] = d.brand || brand;
+    busy(btn, false);
+    renderPlatform();
+    toast(`${platSet === 'apex' ? 'Apex' : 'Platform'} brand saved`);
+  } catch (e) {
+    busy(btn, false);
+    toast(e.message, 5000);
+  }
+}
+
+// ---------------- boot ----------------
+async function init() {
+  // Every [data-copy] element copies its value (list slug, editor URL, …).
+  document.addEventListener('click', (ev) => {
+    const b = ev.target.closest('[data-copy]');
+    if (!b) return;
+    ev.preventDefault();
+    copyText(b.dataset.copy || '');
+  });
+
+  const newBtn = $('#newBtn');
+  if (newBtn) newBtn.onclick = () => newOrg();
+  const list = $('#olist');
+  if (list) list.addEventListener('click', onListClick);
+
+  try {
+    const me = await api('GET', `${BASE}/me`);
+    const label = $('#me');
+    if (label) label.textContent = `${me.email} · Admin`;
+  } catch (e) {
+    $('#detail').innerHTML = `<div class="card empty-state">${esc(e.message)}. <a href="/admin/organizers">Reload</a> after signing in through Cloudflare Access.</div>`;
+    const aside = $('#olistwrap');
+    if (aside) aside.classList.add('hidden');
+    const plat = $('#platCard');
+    if (plat) plat.classList.add('hidden');
+    return;
+  }
+
+  await loadList();
+  loadPlatform();
+}
+
+init();
+</script>
+</body>
+</html>

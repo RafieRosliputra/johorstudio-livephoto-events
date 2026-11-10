@@ -20,6 +20,13 @@ services:
       PHOTOS_DIR: /photos
       REQUIRE_STORAGE_MARKER: "1"
       PUBLIC_URL: https://live.johorstudio.com
+      # White-label tenants (ccam.my): *.ccam.my and ccam.my arrive through the same Cloudflare tunnel
+      # with the original Host header; the app picks the brand from the `organizers` table.
+      ADMIN_HOST: live.johorstudio.com
+      PLATFORM_HOSTS: johorstudio.com,www.johorstudio.com
+      TENANT_ZONE: ccam.my
+      APEX_MODE: redirect
+      BRANDS_DIR: /data/brands
       # Admin login = Cloudflare Access app "JS Live Photo Admin" (live.johorstudio.com/admin + /api/admin)
       ACCESS_TEAM_DOMAIN: johorstudio.cloudflareaccess.com
       ACCESS_AUD: 0a2674c993f1beec5a154842827963543acb1639ce753bae7140baadcf24eecb

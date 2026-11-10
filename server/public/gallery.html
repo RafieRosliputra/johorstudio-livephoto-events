@@ -259,7 +259,7 @@ async function uploadFiles(files) {
   upDone = true; maybeClose();
 }
 
-load().catch(() => { $('#statusText').textContent = 'Could not load the gallery. Pull down to retry.'; });
+load().catch((err) => { console.error('gallery load failed:', err && err.message || err); $('#statusText').textContent = 'Could not load the gallery. Pull down to retry.'; });
 </script>
 </body>
 </html>

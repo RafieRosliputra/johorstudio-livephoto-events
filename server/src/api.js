@@ -19,6 +19,9 @@ import { findFaces, checkPhoto } from './moderation.js';
 import { apkInfo, refreshApk, sendApk, getSource, setSource, saveUploadedApk } from './apk.js';
 import { zipPlan } from './zip.js';
 import { Router, HttpError, fail, sendJson, readJson, readBody, clientIp, randomToken, shortToken, uuid } from './http.js';
+import { publicBase, currentReq, currentTenant } from './request.js';
+import * as tenant from './tenant.js';
+import { extractBrand, fetchImage } from './brandimport.js';
 
 export const router = new Router();
 const r = (m, p, h) => router.add(m, p, h);
@@ -42,8 +45,8 @@ export function photoJson(p) {
 }
 setPhotoSerializer(photoJson);
 
-const galleryUrl = (ev) => `${config.publicUrl}/e/${ev.public_token}`;
-const codeUrl = (code) => `${config.publicUrl}/c/${code}`;
+const galleryUrl = (ev) => `${publicBase()}/e/${ev.public_token}`;
+const codeUrl = (code) => `${publicBase()}/c/${code}`;
 const parseReq = (ev) => { try { return ev.request ? JSON.parse(ev.request) : null; } catch { return null; } };
 
 // QR on the big screen, shown from the admin or organiser panel for settings.qrSec seconds (in memory only).
@@ -81,7 +84,7 @@ const qrState = (id) => { const u = qrUntil.get(id) || 0; return u > Date.now() 
 
 // ---- download-all link: made when the event ends or is closed, valid DL_DAYS, +DL_DAYS each time the admin extends ----
 const DL_DAYS = 7;
-const dlUrl = (ev) => `${config.publicUrl}/d/${ev.dl_token}`;
+const dlUrl = (ev) => `${publicBase()}/d/${ev.dl_token}`;
 function ensureDownload(ev) {
   const st = db.status(ev);
   if (ev.dl_token || (st !== 'closed' && st !== 'ended')) return ev;
@@ -98,7 +101,7 @@ function staffEventJson(ev, role = 'admin') {
   ev = ensureDownload(ev);
   const c = db.eventCounts(ev.id);
   return {
-    id: ev.id, folder: ev.folder_name, date: ev.date, title: ev.title, organiser: ev.organiser, hideName: !!ev.hide_name,
+    id: ev.id, folder: ev.folder_name, date: ev.date, title: ev.title, organiser: ev.organiser, organizerId: ev.organizer_id || '', hideName: !!ev.hide_name,
     token: ev.public_token, url: galleryUrl(ev), status: db.status(ev), startsAt: ev.starts_at, endsAt: ev.ends_at, closedAt: ev.closed_at,
     codes: { public: ev.public_code, photographer: ev.photo_code, client: ev.client_code },
     codeUrl: codeUrl(ev.public_code), publicUpload: !!ev.public_upload_on, showcase: !!ev.showcase,
@@ -114,13 +117,47 @@ const intOrNull = (v) => (v == null || v === '' ? null : Number.isFinite(Number(
 function requireStorage() { if (!storage.storageOnline()) fail(503, 'Storage offline, try again shortly', { retry: true }); }
 function eventOr404(id) { const ev = db.getEvent(id); if (!ev) fail(404, 'Event not found'); return ev; }
 
+// ---------------- white-label scoping ----------------
+// Platform hosts (live.johorstudio.com, the admin, localhost) see every event. A tenant host only sees
+// events owned by that organiser: a gallery/download/QR link must never cross tenants.
+function hostTenant(req) { return (req && req.tenant) || currentTenant(); }
+function eventVisibleOnHost(ev, req) {
+  if (!ev) return false;
+  const t = hostTenant(req);
+  if (!t || t.kind !== 'tenant' || !t.organizer) return true;
+  return !!ev.organizer_id && ev.organizer_id === t.organizer.id;
+}
+function requireSessionOnHost(req, role, eventId) {
+  const s = auth.requireSession(req, role, eventId);
+  if (!eventVisibleOnHost(s.event, req)) fail(401, 'This event is not available on this site.');
+  return s;
+}
+function cleanOrganizerId(v) {
+  const id = String(v == null ? '' : v).trim();
+  if (!id) return '';
+  if (!db.getOrganizer(id)) fail(400, 'Unknown event organiser');
+  return id;
+}
+
 // ---------------- code login ----------------
-r('GET', '/auth/config', (req, res) => sendJson(res, 200, { whatsapp: config.whatsapp, contactUrl: config.contactUrl }));
+function brandContact(req) {
+  const t = hostTenant(req);
+  const b = (t && t.brand) || {};
+  const tenant = t && t.kind === 'tenant';
+  return {
+    whatsapp: b.whatsapp || config.whatsapp,
+    contactUrl: b.contactUrl || (tenant && b.website ? b.website : config.contactUrl),
+    website: b.website || '',
+  };
+}
+r('GET', '/auth/config', (req, res) => sendJson(res, 200, brandContact(req)));
 
 r('POST', '/auth/code', async (req, res) => {
   const body = await readJson(req);
   const want = ['guest', 'photographer', 'client'].includes(body.want) ? body.want : undefined;
-  const { token, role, session, event } = auth.loginWithCode({ code: body.code, name: body.name, want, ip: clientIp(req) });
+  const tenantNow = hostTenant(req);
+  const allowed = (ev) => eventVisibleOnHost(ev, req);
+  const { token, role, session, event } = auth.loginWithCode({ code: body.code, name: body.name, want, ip: clientIp(req), allowed: tenantNow.kind === 'tenant' ? allowed : null });
   const next = role === 'guest' ? `/e/${event.public_token}` : role === 'photographer' ? '/shoot' : '/panel';
   const out = { role, next, event: publicEventJson(event) };
   if (role === 'photographer') Object.assign(out, { slot: session.slot, name: session.name, eventId: event.id });
@@ -138,6 +175,7 @@ r('GET', '/api/me', (req, res) => {
   const out = {};
   for (const role of ['guest', 'photographer', 'client']) {
     const s = auth.sessionFor(req, role);
+    if (s && !eventVisibleOnHost(s.event, req)) continue;
     if (s) out[role] = { event: publicEventJson(s.event), eventId: s.event.id, token: role === 'guest' ? s.event.public_token : undefined, name: s.session.name, slot: s.session.slot };
   }
   sendJson(res, 200, out);
@@ -146,16 +184,19 @@ r('GET', '/api/me', (req, res) => {
 // ---------------- live status (landing page + johorstudio.com tab) ----------------
 r('GET', '/api/live-status', (req, res) => {
   const origin = req.headers.origin;
+  const t = hostTenant(req);
+  const allowed = t && t.kind === 'tenant' && t.baseUrl ? [...config.siteOrigins, t.baseUrl] : config.siteOrigins;
   const headers = { 'cache-control': 'public, max-age=30' };
-  if (origin && config.siteOrigins.includes(origin)) Object.assign(headers, { 'access-control-allow-origin': origin, vary: 'Origin' });
-  const live = db.nowLive().map((e) => ({ id: e.id, name: e.hide_name ? 'Event in progress' : e.title, organiser: e.organiser || '', date: e.date, startsAt: e.starts_at, endsAt: e.ends_at }));
+  if (origin && allowed.includes(origin)) Object.assign(headers, { 'access-control-allow-origin': origin, vary: 'Origin' });
+  const live = db.nowLive().filter((e) => eventVisibleOnHost(e, req))
+    .map((e) => ({ id: e.id, name: e.hide_name ? 'Event in progress' : e.title, organiser: e.organiser || '', date: e.date, startsAt: e.starts_at, endsAt: e.ends_at }));
   sendJson(res, 200, { live, count: live.length }, headers);
 });
 
 // ---------------- download all (organiser link) ----------------
 function dlEvent(token) {
   const ev = db.eventByDownloadToken(String(token || ''));
-  if (!ev) fail(404, 'This download link is not valid');
+  if (!ev || !eventVisibleOnHost(ev, currentReq())) fail(404, 'This download link is not valid');
   return ev;
 }
 function zipEntries(ev, part) {
@@ -205,7 +246,7 @@ r('GET', '/api/d/:token/zip/:part', (req, res, { params }) => {
 // ---------------- guest gallery ----------------
 function eventByToken(token) {
   const ev = db.getEventByToken(token);
-  if (!ev) fail(404, 'This gallery link is not valid');
+  if (!ev || !eventVisibleOnHost(ev, currentReq())) fail(404, 'This gallery link is not valid');
   return ev;
 }
 function guestState(req, ev) {
@@ -221,7 +262,7 @@ r('GET', '/api/e/:token', (req, res, { params }) => {
   const ev = eventByToken(params.token);
   sendJson(res, 200, {
     event: publicEventJson(ev), guest: guestState(req, ev), photos: db.galleryPhotos(ev.id, {}).map(photoJson),
-    maxGuestBytes: config.maxGuestBytes, whatsapp: config.whatsapp,
+    maxGuestBytes: config.maxGuestBytes, whatsapp: brandContact(req).whatsapp,
   });
 });
 r('GET', '/api/e/:token/photos', (req, res, { params, query }) => {
@@ -245,30 +286,31 @@ r('GET', '/p/:token/:photo/:size', (req, res, { params, query }) => {
 // ---------------- landing page sample ----------------
 r('GET', '/api/showcase', (req, res) => {
   const ev = db.showcaseEvent();
+  if (ev && !eventVisibleOnHost(ev, req)) return sendJson(res, 200, { event: null, photos: [] });
   if (!ev) return sendJson(res, 200, { event: null, photos: [] });
   sendJson(res, 200, { event: { title: ev.title, date: ev.date }, photos: db.randomPhotos(ev.id, 24).map(photoJson) });
 });
 r('GET', '/s/:photo/:size', (req, res, { params }) => {
   const p = db.getPhoto(params.photo);
   const ev = p && db.getEvent(p.event_id);
-  if (!ev || !ev.showcase || p.hidden || p.status !== 'approved' || params.size === 'orig') fail(404, 'Not found');
+  if (!ev || !ev.showcase || p.hidden || p.status !== 'approved' || params.size === 'orig' || !eventVisibleOnHost(ev, req)) fail(404, 'Not found');
   serveImage(req, res, ev, p, params.size, false, 'public, max-age=86400');
 });
 
 // ---------------- photographer ----------------
 r('GET', '/api/shoot', (req, res) => {
-  const { session, event } = auth.requireSession(req, 'photographer');
+  const { session, event } = requireSessionOnHost(req, 'photographer');
   sendJson(res, 200, { event: { ...publicEventJson(event), id: event.id }, name: session.name, slot: session.slot, folder: storage.sourceFolder('photographer', session.slot), guestUrl: codeUrl(event.public_code), guestCode: event.public_code });
 });
 // Photographer's own photos (Photographer N folder): list, thumbnail, delete.
 r('GET', '/api/shoot/photos', (req, res, { query }) => {
-  const { session, event } = auth.requireSession(req, 'photographer');
+  const { session, event } = requireSessionOnHost(req, 'photographer');
   const before = query.get('before');
   const list = db.slotPhotos(event.id, session.slot, { before: before ? Number(before) : null, limit: query.get('limit') });
   sendJson(res, 200, { photos: list.map(photoJson) });
 });
 function ownPhoto(req, id) {
-  const { session, event } = auth.requireSession(req, 'photographer');
+  const { session, event } = requireSessionOnHost(req, 'photographer');
   const p = db.getPhoto(id);
   if (!p || p.event_id !== event.id || p.source !== 'photographer' || p.slot !== session.slot) fail(404, 'Photo not found');
   return { ev: event, p };
@@ -313,22 +355,22 @@ function startUpload(res, ev, { source, slot, sessionId, uploader, name, size, i
   sendJson(res, 201, { id: up.id, chunk: config.chunkBytes, received: 0, size, name: path.posix.basename(relPath), slot });
 }
 r('POST', '/api/shoot/uploads', async (req, res) => {
-  const { session, event } = auth.requireSession(req, 'photographer');
+  const { session, event } = requireSessionOnHost(req, 'photographer');
   const body = await readJson(req);
   startUpload(res, event, { source: 'photographer', slot: session.slot, sessionId: session.id, uploader: session.name, name: body.name, size: body.size, ip: clientIp(req), dupKey: cleanKey(body.key) });
 });
 // Which of these files (original name|size|time taken) are already in the event? For the app/web upload log.
 r('POST', '/api/shoot/check', async (req, res) => {
-  const { event } = auth.requireSession(req, 'photographer');
+  const { event } = requireSessionOnHost(req, 'photographer');
   const body = await readJson(req);
   const keys = (Array.isArray(body.keys) ? body.keys : []).slice(0, 1000).map(cleanKey).filter(Boolean);
   sendJson(res, 200, { sent: keys.filter((k) => db.sentKey(event.id, k)) });
 });
 // JS Tether APK, only for signed-in photographers (and admins below).
 const apkJson = (m) => (m ? { name: m.name, version: m.version, size: m.size, tag: m.tag, published: m.published } : null);
-r('GET', '/api/shoot/app', (req, res) => { auth.requireSession(req, 'photographer'); sendJson(res, 200, { apk: apkJson(apkInfo()) }); });
+r('GET', '/api/shoot/app', (req, res) => { requireSessionOnHost(req, 'photographer'); sendJson(res, 200, { apk: apkJson(apkInfo()) }); });
 r('GET', '/api/shoot/app.apk', (req, res) => {
-  auth.requireSession(req, 'photographer');
+  requireSessionOnHost(req, 'photographer');
   const m = apkInfo(); if (!m) fail(404, 'The app is not available yet');
   sendApk(req, res, m);
 });
@@ -353,6 +395,7 @@ function uploadFor(id) {
   if (!up) fail(404, 'Upload not found or expired. Start again.');
   const ev = db.getEvent(up.event_id);
   if (!ev) { db.deleteUpload(id); fail(410, 'The event was deleted'); }
+  if (!eventVisibleOnHost(ev, currentReq())) fail(404, 'Upload not found or expired. Start again.');
   return { up, ev };
 }
 r('GET', '/api/uploads/:id', (req, res, { params }) => {
@@ -431,7 +474,7 @@ r('DELETE', '/api/uploads/:id', (req, res, { params }) => {
 // The same event routes exist under /api/admin and /api/client; `who` decides what is allowed.
 async function staffFor(req, prefix, eventId) {
   if (prefix === 'admin') { const a = await auth.requireAdmin(req); return { role: 'admin', email: a.email, ev: eventOr404(eventId) }; }
-  const s = auth.requireSession(req, 'client', eventId);
+  const s = requireSessionOnHost(req, 'client', eventId);
   return { role: 'client', ev: s.event, session: s.session };
 }
 function photoOfEvent(ev, id) {
@@ -580,7 +623,7 @@ r('POST', '/api/client/events/:id/request', async (req, res, { params }) => {
   sendJson(res, 200, { event: staffEventJson(db.getEvent(ev.id), 'client') });
 });
 r('GET', '/api/client/me', (req, res) => {
-  const s = auth.requireSession(req, 'client');
+  const s = requireSessionOnHost(req, 'client');
   sendJson(res, 200, { event: staffEventJson(s.event, 'client') });
 });
 
@@ -592,14 +635,15 @@ A('PUT', '/background', async (req, res) => { await saveBg(req, adminBg()); send
 A('DELETE', '/background', (req, res) => { fs.rmSync(adminBg(), { force: true }); sendJson(res, 200, { ok: true }); });
 A('GET', '/background/info', (req, res) => sendJson(res, 200, { admin: fs.existsSync(adminBg()) }));
 
-A('GET', '/me', (req, res, ctx, admin) => sendJson(res, 200, { email: admin.email, storageOnline: storage.storageOnline(), publicUrl: config.publicUrl, maxLive: config.maxLiveEvents }));
+A('GET', '/me', (req, res, ctx, admin) => sendJson(res, 200, { email: admin.email, storageOnline: storage.storageOnline(), publicUrl: publicBase(), adminHost: config.adminHost, tenantZone: config.tenantZone, maxLive: config.maxLiveEvents }));
 A('GET', '/events', (req, res) => {
-  const list = db.listEvents().map((e) => ({ ...staffEventJson(e), photoCount: e.photo_count, guestCount: e.guest_count, reviewCount: e.review_count }));
+  const list = db.listEvents().map((e) => ({ ...staffEventJson(e), photoCount: e.photo_count, guestCount: e.guest_count, reviewCount: e.review_count,
+    organizerName: e.organizer_id ? (db.getOrganizer(e.organizer_id)?.name || '') : '' }));
   sendJson(res, 200, { events: list, liveCount: db.nowLive().length });
 });
 A('POST', '/events', async (req, res) => {
   const body = await readJson(req);
-  const ev = storage.createEvent({ date: String(body.date || ''), title: body.title, organiser: body.organiser || '' });
+  const ev = storage.createEvent({ date: String(body.date || ''), title: body.title, organiser: body.organiser || '', organizerId: cleanOrganizerId(body.organizerId) });
   sendJson(res, 201, { event: staffEventJson(ev) });
 });
 
@@ -616,6 +660,7 @@ A('PATCH', '/events/:id', async (req, res, { params }) => {
   const body = await readJson(req);
   const f = {};
   if ('organiser' in body) f.organiser = storage.cleanTitle(body.organiser);
+  if ('organizerId' in body) f.organizer_id = cleanOrganizerId(body.organizerId);
   if ('hideName' in body) f.hide_name = body.hideName ? 1 : 0;
   if ('publicUpload' in body) f.public_upload_on = body.publicUpload ? 1 : 0;
   if ('showcase' in body) f.showcase = body.showcase ? 1 : 0;
@@ -819,6 +864,233 @@ A('POST', '/app/upload', async (req, res) => {
 });
 A('GET', '/app.apk', (req, res) => { const m = apkInfo(); if (!m) fail(404, 'The app is not available yet'); sendApk(req, res, m); });
 A('GET', '/status', (req, res) => sendJson(res, 200, { storageOnline: storage.storageOnline(), photosDir: config.photosDir, moderator: config.moderatorUrl || null, scan: storage.scanAll() }));
+
+
+// ---------------- white-label organisers: ccam.my tenants (admin only) ----------------
+// One row per client brand. `status` is the on/off switch: 'draft' (not deployed), 'live', 'off'.
+// Deploying is just status=live: wildcard DNS + one tunnel hostname (*.ccam.my) send every subdomain
+// to this app, and the app decides which tenant answers by Host.
+const RESERVED_SLUGS = new Set(['www', 'admin', 'live', 'api', 'app', 'mail', 'static', 'assets', 'cdn', 'media', 'panel', 'show', 'shoot', 'organizers']);
+const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
+const LOGO_KINDS = new Set(['logo', 'logo-dark', 'favicon']);
+const LOGO_FIELD = { logo: 'logo', 'logo-dark': 'logoDark', favicon: 'favicon' };
+
+const parseBrand = (raw) => { try { return JSON.parse(raw || '{}') || {}; } catch { return {}; } };
+
+function organizerJson(org) {
+  const brand = tenant.mergeBrand(tenant.DEFAULT_BRAND, { ...parseBrand(org.brand), custom: true });
+  return {
+    id: org.id, slug: org.slug, name: org.name || brand.name, domain: org.domain, status: org.status,
+    url: `https://${org.slug}.${config.tenantZone}`, brand,
+    createdAt: org.created_at, updatedAt: org.updated_at,
+  };
+}
+
+const HOST_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+/** Comma separated custom domains -> normalised list (no zone hosts, no duplicates). */
+function cleanDomainInput(raw) {
+  const out = [];
+  for (const part of String(raw || '').split(',')) {
+    const h = part.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '');
+    if (!h) continue;
+    if (!HOST_RE.test(h)) fail(400, `Not a valid domain: ${h}`);
+    if (h === config.tenantZone || h.endsWith(`.${config.tenantZone}`)) fail(400, `Use the slug for ${config.tenantZone}, not a domain: ${h}`);
+    if (tenant.isPlatformHost(h)) fail(400, `That domain belongs to the platform: ${h}`);
+    if (!out.includes(h)) out.push(h);
+  }
+  if (out.length > 5) fail(400, 'At most 5 custom domains per organiser');
+  return out.join(',');
+}
+
+function assertSlugFree(slug, exceptId = '') {
+  if (!SLUG_RE.test(slug)) fail(400, 'Slug must be 2-40 characters: a-z, 0-9 or "-"');
+  if (RESERVED_SLUGS.has(slug)) fail(409, `"${slug}" is reserved`);
+  const other = db.organizerBySlug(slug);
+  if (other && other.id !== exceptId) fail(409, `The subdomain ${slug}.${config.tenantZone} is already used by ${other.name || other.slug}`);
+}
+
+function assertDomainsFree(domain, exceptId = '') {
+  const wanted = String(domain || '').split(',').filter(Boolean);
+  if (!wanted.length) return;
+  for (const org of db.listOrganizers()) {
+    if (org.id === exceptId) continue;
+    const used = String(org.domain || '').split(',').filter(Boolean);
+    const clash = wanted.find((h) => used.includes(h));
+    if (clash) fail(409, `${clash} is already used by ${org.name || org.slug}`);
+  }
+}
+
+function imageExt(buf) {
+  if (!buf || buf.length < 4) return '';
+  if (buf[0] === 0x89 && buf[1] === 0x50) return 'png';
+  if (buf[0] === 0xff && buf[1] === 0xd8) return 'jpg';
+  if (buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP') return 'webp';
+  if (buf.subarray(0, 3).toString('ascii') === 'GIF') return 'gif';
+  if (buf[0] === 0 && buf[1] === 0 && buf[2] === 1 && buf[3] === 0) return 'ico';
+  const head = buf.subarray(0, 600).toString('utf8').replace(/^\uFEFF/, '').trim().toLowerCase();
+  if (head.startsWith('<svg') || (head.startsWith('<?xml') && head.includes('<svg'))) return 'svg';
+  return '';
+}
+
+/** Store an uploaded/downloaded logo and point the brand at it. */
+function saveLogoFile(org, kind, buf) {
+  const ext = imageExt(buf);
+  if (!ext) fail(415, 'Use PNG, JPEG, WebP, SVG, GIF or ICO');
+  const dir = path.join(config.brandsDir, org.slug);
+  fs.mkdirSync(dir, { recursive: true });
+  for (const f of fs.readdirSync(dir)) {
+    if (f === `${kind}.${ext}`) continue;
+    if (new RegExp(`^${kind}\\.`).test(f) || new RegExp(`^${kind}-\\d+\\.`).test(f)) fs.rmSync(path.join(dir, f), { force: true });
+  }
+  fs.writeFileSync(path.join(dir, `${kind}.${ext}`), buf);
+  const brand = { ...parseBrand(org.brand), [LOGO_FIELD[kind]]: `/brand/${org.slug}/${kind}.${ext}`, custom: true, updatedAt: Date.now() };
+  db.updateOrganizer(org.id, { brand: JSON.stringify(brand) });
+  return db.getOrganizer(org.id);
+}
+
+A('GET', '/organizers', (req, res) => sendJson(res, 200, {
+  organizers: db.listOrganizers().map(organizerJson), zone: config.tenantZone, adminHost: config.adminHost,
+  apexMode: config.apexMode, disclaimer: config.tenantDisclaimer,
+}));
+
+A('POST', '/organizers', async (req, res) => {
+  const body = await readJson(req);
+  const slug = String(body.slug || '').trim().toLowerCase();
+  const name = String(body.name || '').trim().slice(0, 80);
+  if (!name) fail(400, 'Company name is required');
+  assertSlugFree(slug);
+  const domain = cleanDomainInput(body.domain);
+  const brand = { ...tenant.cleanBrand(body.brand || {}), name, custom: true, updatedAt: Date.now() };
+  const org = db.createOrganizer({ id: uuid(), slug, name, domain, brand: JSON.stringify(brand), status: 'draft' });
+  sendJson(res, 201, { organizer: organizerJson(org) });
+});
+
+A('GET', '/organizers/:id', (req, res, { params }) => {
+  const org = db.getOrganizer(params.id) || fail(404, 'Organiser not found');
+  sendJson(res, 200, { organizer: organizerJson(org) });
+});
+
+A('PUT', '/organizers/:id', async (req, res, { params }) => {
+  const org = db.getOrganizer(params.id) || fail(404, 'Organiser not found');
+  const body = await readJson(req);
+  const patch = {};
+  if ('slug' in body) { const slug = String(body.slug || '').trim().toLowerCase(); assertSlugFree(slug, org.id); patch.slug = slug; }
+  if ('name' in body) { const name = String(body.name || '').trim().slice(0, 80); if (!name) fail(400, 'Company name is required'); patch.name = name; }
+  if ('domain' in body) { const domain = cleanDomainInput(body.domain); assertDomainsFree(domain, org.id); patch.domain = domain; }
+  if ('status' in body) {
+    const status = String(body.status || '');
+    if (!['draft', 'live', 'off'].includes(status)) fail(400, 'Status must be draft, live or off');
+    patch.status = status;
+  }
+  if ('brand' in body) {
+    const merged = { ...parseBrand(org.brand), ...tenant.cleanBrand(body.brand || {}), custom: true, updatedAt: Date.now() };
+    patch.brand = JSON.stringify(merged);
+    if (!patch.name && merged.name) patch.name = String(merged.name).slice(0, 80);
+  }
+  const out = db.updateOrganizer(org.id, patch);
+  sendJson(res, 200, { organizer: organizerJson(out) });
+});
+
+A('POST', '/organizers/:id/status', async (req, res, { params }) => {
+  const org = db.getOrganizer(params.id) || fail(404, 'Organiser not found');
+  const body = await readJson(req);
+  const status = String(body.status || '');
+  if (!['draft', 'live', 'off'].includes(status)) fail(400, 'Status must be draft, live or off');
+  sendJson(res, 200, { organizer: organizerJson(db.updateOrganizer(org.id, { status })) });
+});
+
+A('DELETE', '/organizers/:id', (req, res, { params }) => {
+  const org = db.getOrganizer(params.id) || fail(404, 'Organiser not found');
+  db.deleteOrganizer(org.id);
+  sendJson(res, 200, { ok: true });
+});
+
+A('POST', '/organizers/:id/logo', async (req, res, { params }) => {
+  const org = db.getOrganizer(params.id) || fail(404, 'Organiser not found');
+  const kind = String(req.headers['x-kind'] || 'logo');
+  if (!LOGO_KINDS.has(kind)) fail(400, 'Unknown logo kind');
+  const buf = await readBody(req, 4 * 1024 * 1024);
+  if (!buf.length) fail(400, 'Empty file');
+  sendJson(res, 200, { organizer: organizerJson(saveLogoFile(org, kind, buf)) });
+});
+
+A('POST', '/organizers/:id/logo-from-url', async (req, res, { params }) => {
+  const org = db.getOrganizer(params.id) || fail(404, 'Organiser not found');
+  const body = await readJson(req);
+  const kind = String(body.kind || 'logo');
+  if (!LOGO_KINDS.has(kind)) fail(400, 'Unknown logo kind');
+  const u = safeUrl(body.url);
+  await assertPublicHost(u);
+  const img = await fetchImage(u.toString());
+  sendJson(res, 200, { organizer: organizerJson(saveLogoFile(org, kind, img.body)) });
+});
+
+A('DELETE', '/organizers/:id/logo/:kind', (req, res, { params }) => {
+  const org = db.getOrganizer(params.id) || fail(404, 'Organiser not found');
+  const kind = String(params.kind || '');
+  if (!LOGO_KINDS.has(kind)) fail(400, 'Unknown logo kind');
+  const dir = path.join(config.brandsDir, org.slug);
+  try {
+    for (const f of fs.readdirSync(dir)) if (new RegExp(`^${kind}\\.`).test(f) || new RegExp(`^${kind}-\\d+\\.`).test(f)) fs.rmSync(path.join(dir, f), { force: true });
+  } catch { /* no folder yet */ }
+  const brand = { ...parseBrand(org.brand), [LOGO_FIELD[kind]]: '', custom: true, updatedAt: Date.now() };
+  sendJson(res, 200, { organizer: organizerJson(db.updateOrganizer(org.id, { brand: JSON.stringify(brand) })) });
+});
+
+// Read a client's website and return branding candidates (name, logo, colours, fonts).
+A('POST', '/organizers/:id/import', async (req, res, { params }) => {
+  const org = db.getOrganizer(params.id) || fail(404, 'Organiser not found');
+  const body = await readJson(req);
+  const u = safeUrl(body.url);
+  await assertPublicHost(u);
+  const report = await extractBrand(u.toString());
+  if (!body.apply) return sendJson(res, 200, { report });
+  const cur = parseBrand(org.brand);
+  const c = report.suggestedColors || {};
+  const next = {
+    ...cur, custom: true, updatedAt: Date.now(),
+    name: cur.name || report.name || org.name,
+    website: cur.website || report.finalUrl,
+    colorPrimary: cur.colorPrimary || c.primary || '',
+    colorAccent: cur.colorAccent || c.accent || '',
+    colorGraphite: cur.colorGraphite || c.graphite || '',
+    colorPaper: cur.colorPaper || c.paper || '',
+    font: cur.font || report.fonts?.[0]?.name || '',
+    fontUrl: cur.fontUrl || report.fontUrl || '',
+    favicon: cur.favicon || report.favicon || '',
+    logo: cur.logo || report.logoCandidates?.[0]?.url || '',
+  };
+  if (!cur.logo && report.logoCandidates?.[0]?.url) {
+    try {
+      const img = await fetchImage(report.logoCandidates[0].url);
+      if (imageExt(img.body)) { saveLogoFile(org, 'logo', img.body); next.logo = `/brand/${org.slug}/logo.${imageExt(img.body)}`; }
+    } catch { /* keep the remote URL as a fallback */ }
+  }
+  sendJson(res, 200, { organizer: organizerJson(db.updateOrganizer(org.id, { brand: JSON.stringify(next) })), report });
+});
+
+// Master brand of live.johorstudio.com (the admin host) and of the ccam.my apex (APEX_MODE=app).
+function savePlatformBrand(key) {
+  return async (req, res) => {
+    const body = await readJson(req);
+    const brand = { ...tenant.cleanBrand(body.brand || body), custom: true, updatedAt: Date.now() };
+    db.setMeta(key, JSON.stringify(brand));
+    sendJson(res, 200, { brand: key === 'brand:apex' ? tenant.apexBrand() : tenant.platformBrand() });
+  };
+}
+A('GET', '/brand/platform', (req, res) => sendJson(res, 200, { brand: tenant.platformBrand(), adminHost: config.adminHost, zone: config.tenantZone, apexMode: config.apexMode }));
+A('PUT', '/brand/platform', savePlatformBrand('brand:platform'));
+A('GET', '/brand/apex', (req, res) => sendJson(res, 200, { brand: tenant.apexBrand(), zone: config.tenantZone }));
+A('PUT', '/brand/apex', savePlatformBrand('brand:apex'));
+
+// Public: what the current host should look like (used by pages that load later, and by tooling).
+r('GET', '/api/brand', (req, res, ctx) => {
+  const t = ctx?.tenant || req.tenant || tenant.tenantFor(req);
+  sendJson(res, 200, {
+    ...tenant.brandPayload(t), baseUrl: t.baseUrl || config.publicUrl,
+    adminHost: config.adminHost, zone: config.tenantZone,
+  }, { 'cache-control': 'no-store', vary: 'Host' });
+});
 
 // ---------------- image serving ----------------
 function contentTypeOf(file) {

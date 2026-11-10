@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS events (
   date         TEXT NOT NULL DEFAULT '',
   title        TEXT NOT NULL DEFAULT '',
   organiser    TEXT NOT NULL DEFAULT '',
+  organizer_id TEXT NOT NULL DEFAULT '',       -- white-label tenant (organizers.id), '' = JohorStudio itself
   hide_name    INTEGER NOT NULL DEFAULT 0,
   public_token TEXT NOT NULL UNIQUE,           -- gallery link /e/<token>
   public_code  TEXT NOT NULL,                  -- 6 digits, guests (changes every live window)
@@ -95,6 +96,23 @@ CREATE TABLE IF NOT EXISTS uploads (
   updated_at INTEGER NOT NULL
 );
 
+-- White-label event organisers (ccam.my tenants). One row per client brand.
+--   slug    = <slug>.ccam.my
+--   domain  = optional custom host(s), comma separated (Cloudflare for SaaS later)
+--   status  = 'draft' (not deployed), 'live' (on), 'off' (switched off by the admin)
+--   brand   = JSON brand (see tenant.js DEFAULT_BRAND)
+CREATE TABLE IF NOT EXISTS organizers (
+  id         TEXT PRIMARY KEY,
+  slug       TEXT NOT NULL UNIQUE,
+  name       TEXT NOT NULL DEFAULT '',
+  domain     TEXT NOT NULL DEFAULT '',
+  status     TEXT NOT NULL DEFAULT 'draft',
+  brand      TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS organizers_domain ON organizers(domain);
+
 -- Photographer files already sent, by original name|size|time taken: stops the same photo twice.
 CREATE TABLE IF NOT EXISTS sent_keys (
   event_id   TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
@@ -136,6 +154,8 @@ export function openDb(file = path.join(config.dataDir, 'livephoto.db')) {
   // download-all link for the organiser (made when the event closes, valid 7 days, admin can add 7 more)
   try { db.exec('ALTER TABLE events ADD COLUMN dl_token TEXT'); } catch { /* already there */ }
   try { db.exec('ALTER TABLE events ADD COLUMN dl_until INTEGER'); } catch { /* already there */ }
+  // white-label: the organiser (organizers.id) that owns this event on <slug>.ccam.my
+  try { db.exec("ALTER TABLE events ADD COLUMN organizer_id TEXT NOT NULL DEFAULT ''"); } catch { /* already there */ }
   db.prepare("INSERT OR IGNORE INTO meta(key,value) VALUES('schema',?)").run(String(SCHEMA_VERSION));
   return db;
 }
@@ -203,7 +223,7 @@ export function eventCounts(id) {
     FROM photos WHERE event_id=?`).get(id);
 }
 
-export function insertEvent({ id, folderName, date, title, token, publicCode, photoCode, clientCode, organiser = '',
+export function insertEvent({ id, folderName, date, title, token, publicCode, photoCode, clientCode, organiser = '', organizerId = '',
   publicUploadOn = 1, createdAt = now() }) {
   const existing = getEventAny(id);
   if (existing) {
@@ -213,12 +233,12 @@ export function insertEvent({ id, folderName, date, title, token, publicCode, ph
   publicCode = publicCode && !codeTaken(publicCode) ? publicCode : newCode();
   photoCode = photoCode && !codeTaken(photoCode) && photoCode !== publicCode ? photoCode : newCode('', [publicCode]);
   clientCode = clientCode && !codeTaken(clientCode) && ![publicCode, photoCode].includes(clientCode) ? clientCode : newCode('', [publicCode, photoCode]);
-  q(`INSERT INTO events(id,folder_name,date,title,organiser,public_token,public_code,photo_code,client_code,public_upload_on,created_at)
-     VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(id, folderName, date, title, organiser, token, publicCode, photoCode, clientCode, publicUploadOn ? 1 : 0, createdAt);
+  q(`INSERT INTO events(id,folder_name,date,title,organiser,organizer_id,public_token,public_code,photo_code,client_code,public_upload_on,created_at)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, folderName, date, title, organiser, organizerId, token, publicCode, photoCode, clientCode, publicUploadOn ? 1 : 0, createdAt);
   return getEvent(id);
 }
 
-const EDITABLE = ['folder_name', 'date', 'title', 'organiser', 'hide_name', 'public_token', 'public_code', 'photo_code', 'client_code',
+const EDITABLE = ['folder_name', 'date', 'title', 'organiser', 'organizer_id', 'hide_name', 'public_token', 'public_code', 'photo_code', 'client_code',
   'starts_at', 'ends_at', 'closed_at', 'public_upload_on', 'showcase', 'settings', 'request', 'dl_token', 'dl_until'];
 export function updateEvent(id, fields) {
   for (const [k, v] of Object.entries(fields)) {
@@ -370,3 +390,37 @@ export function setFaces(id, faces) { q('UPDATE photos SET faces=? WHERE id=?').
 // ---------------- download-all ----------------
 export const eventByDownloadToken = (token) => q('SELECT * FROM events WHERE dl_token=? AND deleted_at IS NULL').get(token);
 export const zipPhotos = (eventId) => q("SELECT * FROM photos WHERE event_id=? AND status='approved' AND hidden=0 ORDER BY seq").all(eventId);
+
+// ---------------- white-label organisers (ccam.my tenants) ----------------
+export function getMeta(key) {
+  return q('SELECT value FROM meta WHERE key=?').get(key)?.value ?? null;
+}
+export function setMeta(key, value) {
+  q('INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, String(value));
+  return value;
+}
+
+export const listOrganizers = () => q('SELECT * FROM organizers ORDER BY name COLLATE NOCASE').all();
+export const getOrganizer = (id) => q('SELECT * FROM organizers WHERE id=?').get(id);
+export const organizerBySlug = (slug) => q('SELECT * FROM organizers WHERE slug=?').get(String(slug || '').toLowerCase());
+export function organizerByDomain(host) {
+  const h = String(host || '').toLowerCase();
+  if (!h) return undefined;
+  return q(`SELECT * FROM organizers WHERE ','||domain||',' LIKE ?`).get(`%,${h},%`);
+}
+export function createOrganizer({ id, slug, name = '', domain = '', brand = '{}', status = 'draft' }) {
+  const t = now();
+  q('INSERT INTO organizers(id,slug,name,domain,status,brand,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)')
+    .run(id, slug, name, domain, status, brand, t, t);
+  return getOrganizer(id);
+}
+export function updateOrganizer(id, fields) {
+  const allowed = ['slug', 'name', 'domain', 'status', 'brand'];
+  const keys = Object.keys(fields || {}).filter((k) => allowed.includes(k));
+  if (!keys.length) return getOrganizer(id);
+  const sets = keys.map((k) => `${k}=?`).join(',');
+  q(`UPDATE organizers SET ${sets}, updated_at=? WHERE id=?`).run(...keys.map((k) => fields[k]), now(), id);
+  return getOrganizer(id);
+}
+export const deleteOrganizer = (id) => q('DELETE FROM organizers WHERE id=?').run(id);
+export const countOrganizers = () => q('SELECT COUNT(*) AS n FROM organizers').get().n;

@@ -89,7 +89,7 @@ export function writeMeta(ev) {
 }
 
 // ---------- events ----------
-export function createEvent({ date, title, organiser = '' }) {
+export function createEvent({ date, title, organiser = '', organizerId = '' }) {
   if (!storageOnline()) throw Object.assign(new Error('Storage offline, try again shortly'), { status: 503 });
   title = cleanTitle(title);
   if (!isDate8(date)) throw Object.assign(new Error('Date must be YYYYMMDD'), { status: 400 });
@@ -97,7 +97,7 @@ export function createEvent({ date, title, organiser = '' }) {
   let folder = `${date} ${title}`, n = 2;
   while (fs.existsSync(path.join(EVENTS_DIR(), folder))) folder = `${date} ${title} (${n++})`;
   fs.mkdirSync(path.join(EVENTS_DIR(), folder, PUBLIC_UPLOAD), { recursive: true });
-  const ev = db.insertEvent({ id: uuid(), folderName: folder, date, title: folder.slice(9), token: shortToken(), organiser: cleanTitle(organiser) });
+  const ev = db.insertEvent({ id: uuid(), folderName: folder, date, title: folder.slice(9), token: shortToken(), organiser: cleanTitle(organiser), organizerId });
   writeMeta(ev);
   return ev;
 }
