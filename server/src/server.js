@@ -146,6 +146,13 @@ function handle(req, res, url, tenantInfo) {
       if (g.action === 'redirect') { res.writeHead(302, { location: g.location, 'cache-control': 'no-store' }); return res.end(); }
       return sendJson(res, g.status, { error: g.error });
     }
+    // Tenant landing photo mosaic: the page loads /data/hero.json, so answer with the brand's own photos.
+    if (url.pathname === '/data/hero.json' && (req.method === 'GET' || req.method === 'HEAD')
+      && tenantInfo.kind === 'tenant' && tenantInfo.brand.heroImages) {
+      const name = tenantInfo.brand.name || 'Event photos';
+      const photos = tenant.heroImageList(tenantInfo.brand).map((src) => ({ title: name, album: tenantInfo.brand.website || '/', sm: src, md: src, w: 1600, h: 1067 }));
+      return sendJson(res, 200, { note: 'Hero photos for this client brand', photos }, { 'cache-control': 'no-cache', vary: 'Host' });
+    }
     // Brand logos are served even when the tenant is switched off (the status page uses them).
     const brandAsset = BRAND_ASSET_RE.exec(url.pathname);
     if (brandAsset && (req.method === 'GET' || req.method === 'HEAD') && serveBrandAsset(req, res, brandAsset[1], brandAsset[2])) return;

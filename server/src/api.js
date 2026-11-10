@@ -1061,6 +1061,9 @@ A('POST', '/organizers/:id/import', async (req, res, { params }) => {
     favicon: cur.favicon || report.favicon || '',
     logo: cur.logo || report.logoCandidates?.[0]?.url || '',
   };
+  if (!cur.heroImages && Array.isArray(report.imageCandidates) && report.imageCandidates.length) {
+    next.heroImages = report.imageCandidates.slice(0, 5).map((c) => c.url).filter(Boolean).join(',');
+  }
   if (!cur.logo && report.logoCandidates?.[0]?.url) {
     try {
       const img = await fetchImage(report.logoCandidates[0].url);

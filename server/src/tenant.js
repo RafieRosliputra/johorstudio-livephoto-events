@@ -38,6 +38,7 @@ export const DEFAULT_BRAND = {
   contactUrl: '',
   heroHeadline: '',
   heroSub: '',
+  heroImages: '',          // up to 5 https URLs, comma separated (tenant landing photo mosaic)
   disclaimer: '',
   hidePlatformLinks: false,
   custom: false,
@@ -60,6 +61,19 @@ const URL_KEYS = new Set(['logo', 'logoDark', 'favicon']);
 const TEXT_KEYS = new Set(['name', 'shortName', 'tagline', 'heroHeadline', 'heroSub', 'disclaimer', 'website', 'contactUrl']);
 
 const cleanText = (v) => String(v ?? '').replace(TEXT_RE, '').replace(/\s+/g, ' ').trim().slice(0, 200);
+/** Up to 5 image URLs (https or a /brand/... local path), comma separated. */
+function cleanUrlList(raw) {
+  const out = [];
+  for (const part of String(raw || '').split(/[\n,]+/)) {
+    const u = part.trim();
+    if (!u) continue;
+    if (!(HTTPS_RE.test(u) || LOCAL_PATH_RE.test(u))) continue;
+    if (!out.includes(u)) out.push(u.slice(0, 600));
+    if (out.length >= 5) break;
+  }
+  return out.join(',');
+}
+export const heroImageList = (brand) => String(brand?.heroImages || '').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 5);
 
 /** Keep only known brand fields, validated. Unknown keys are dropped. */
 export function cleanBrand(raw) {
@@ -74,6 +88,7 @@ export function cleanBrand(raw) {
     if (k === 'font') { out[k] = FONT_RE.test(s) ? s : ''; continue; }
     if (k === 'fontUrl') { out[k] = GOOGLE_FONTS_RE.test(s) ? s : ''; continue; }
     if (URL_KEYS.has(k)) { out[k] = (LOCAL_PATH_RE.test(s) || HTTPS_RE.test(s)) ? s.slice(0, 700) : ''; continue; }
+    if (k === 'heroImages') { out[k] = cleanUrlList(s); continue; }
     if (k === 'whatsapp') { out[k] = s.replace(/\D/g, '').slice(0, 15); continue; }
     if (TEXT_KEYS.has(k)) {
       const t = cleanText(s);
@@ -270,7 +285,7 @@ export function brandPayload(tenant) {
     name: b.name, shortName: b.shortName || b.name, tagline: b.tagline,
     logo: b.logo, logoDark: b.logoDark, favicon: b.favicon || b.logo,
     website: b.website, whatsapp: b.whatsapp, contactUrl: b.contactUrl,
-    heroHeadline: b.heroHeadline, heroSub: b.heroSub,
+    heroHeadline: b.heroHeadline, heroSub: b.heroSub, heroImages: heroImageList(b),
     disclaimer: b.disclaimer || config.tenantDisclaimer,
     hidePlatformLinks: !!b.hidePlatformLinks,
     colors: {

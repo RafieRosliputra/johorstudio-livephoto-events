@@ -125,6 +125,18 @@ test('dominantColoursOfImage decodes a PNG logo and keeps saturation/contrast in
   assert.ok(res.rows[0].share > 50);
 });
 
+test('imageCandidates finds hero/event photos and skips the logo', () => {
+  const html = `<img src="/logo.png" class="logo" width="200" height="60">
+    <img src="/uploads/hero-1.jpg" width="1920" height="1280">
+    <img src="/uploads/thumb.png" width="120" height="90">
+    <div style="background-image:url('/uploads/bg-2.webp')"></div>`;
+  const logos = [{ url: 'https://x.test/logo.png' }];
+  const imgs = bi.imageCandidates(html, 'https://x.test/page', logos);
+  assert.ok(imgs.some((i) => i.url === 'https://x.test/uploads/hero-1.jpg'));
+  assert.ok(imgs.some((i) => i.url === 'https://x.test/uploads/bg-2.webp'));
+  assert.ok(!imgs.some((i) => i.url.endsWith('/logo.png')));
+});
+
 test('unsupported image formats fail explicitly (JPEG/WebP are not decoded)', () => {
   assert.throws(() => bi.dominantColoursOfImage(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0]), 'image/jpeg'));
 });

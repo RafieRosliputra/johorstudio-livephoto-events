@@ -326,6 +326,42 @@ test('tenant contact details replace the platform WhatsApp/contact', async () =>
   assert.notEqual(platformCfg.json.whatsapp, '60127212813');
 });
 
+test('tenant hero images replace the platform mosaic photos', async () => {
+  const platform = await call('GET', '/data/hero.json', { host: 'live.johorstudio.com' });
+  assert.equal(platform.status, 200);
+  assert.ok(platform.json.photos.length > 0);
+  assert.ok(String(platform.json.photos[0].sm).includes('johorstudio.com'), 'platform mosaic uses JohorStudio photos');
+
+  const org = (await admin('GET', '/api/admin/organizers')).json.organizers.find((o) => o.slug === 'passion');
+  const hero = ['https://passion-sound-event.com/wp-content/uploads/2021/04/ho12.jpg',
+    'https://passion-sound-event.com/wp-content/uploads/2021/06/GROUP-PHOTO-PASSION-02-scaled.jpg'];
+  const r = await asJson('PUT', `/api/admin/organizers/${org.id}`, { brand: { heroImages: hero.join('\n'), website: 'https://passion-sound-event.com/' } });
+  assert.equal(r.status, 200, r.text);
+  assert.deepEqual(r.json.organizer.brand.heroImages.split(','), hero);
+
+  const tenant = await call('GET', '/data/hero.json', { host: 'passion.ccam.my' });
+  assert.equal(tenant.status, 200);
+  assert.equal(tenant.json.photos.length, 2);
+  assert.equal(tenant.json.photos[0].sm, hero[0]);
+  assert.equal(tenant.json.photos[0].title, 'Passion Sound & Event');
+  // the platform page is untouched
+  const platformAgain = await call('GET', '/data/hero.json', { host: 'live.johorstudio.com' });
+  assert.ok(String(platformAgain.json.photos[0].sm).includes('johorstudio.com'));
+});
+
+test('heroImages only accepts up to 5 https/local image URLs', async () => {
+  const org = (await admin('GET', '/api/admin/organizers')).json.organizers.find((o) => o.slug === 'passion');
+  const r = await asJson('PUT', `/api/admin/organizers/${org.id}`, {
+    brand: { heroImages: ['https://a.test/1.jpg', 'javascript:alert(1)', 'https://a.test/2.jpg', 'https://a.test/3.jpg',
+      'https://a.test/4.jpg', 'https://a.test/5.jpg', 'https://a.test/6.jpg'].join(',') },
+  });
+  assert.equal(r.status, 200, r.text);
+  const list = r.json.organizer.brand.heroImages.split(',');
+  assert.equal(list.length, 5);
+  assert.ok(!list.some((u) => u.startsWith('javascript:')));
+  assert.equal(list[0], 'https://a.test/1.jpg');
+});
+
 // ---------------- event ownership scoping ----------------
 test('an event only shows on its owner tenant host', async () => {
   const org = (await admin('GET', '/api/admin/organizers')).json.organizers.find((o) => o.slug === 'passion');

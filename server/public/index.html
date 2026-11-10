@@ -420,9 +420,12 @@ fetch('/data/hero.json').then((r) => r.json()).then(({ photos }) => {
     const wantTall = tall(rect);
     const fits = pool.filter((p) => !used.has(p) && (p.h > p.w) === wantTall);
     const list = fits.length ? fits : pool.filter((p) => !used.has(p));
-    return list[Math.floor(Math.random() * list.length)];
+    // A tenant brand may provide only a handful of photos: reuse one instead of returning undefined.
+    const from = list.length ? list : pool;
+    return from[Math.floor(Math.random() * from.length)];
   }
   function show(t, p) {
+    if (!p) return;
     if (t.photo) used.delete(t.photo);
     used.add(p); t.photo = p;
     const img = new Image();

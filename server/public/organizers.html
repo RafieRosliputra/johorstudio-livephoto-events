@@ -179,13 +179,14 @@ let cur = null;        // organiser from the server (last known saved state)
 let draft = null;      // editable copy: { name, slug, domain, status, brand }
 let lastReport = null; // last website-import report, kept for the candidate handlers
 // The exact candidate lists rendered last, so data-index buttons always hit the same row.
-let reportLists = { names: [], tags: [], logos: [], fonts: [] };
+let reportLists = { names: [], tags: [], logos: [], fonts: [], imgs: [] };
 const platBrands = { platform: null, apex: null };
 const platErrors = { platform: '', apex: '' };
 let platSet = 'platform';
 
 // ---------------- small helpers ----------------
 const hex = (v) => (/^#[0-9a-f]{6}$/i.test(String(v || '').trim()) ? String(v).trim().toLowerCase() : '');
+const heroList = (v) => String(v || '').split(/[\n,]+/).map((x) => x.trim()).filter((x) => /^https:\/\//i.test(x) || /^\/brand\//.test(x)).slice(0, 5);
 const safeMedia = (v) => {
   const s = String(v || '').trim();
   return (/^https:\/\/[^\s"'<>]+$/i.test(s) || /^\/[a-z0-9][^\s"'<>]*$/i.test(s)) ? s : '';
@@ -486,6 +487,12 @@ function renderEditor() {
     </div>
 
     <div class="card section">
+      <h3>Hero images</h3>
+      <p class="small muted" style="margin:0">Photos on the tenant landing page (up to 5). One https URL per line; empty = no photo mosaic. Use <b>Read website</b> above to find event photos on the client site.</p>
+      <textarea class="input" id="fHeroImgs" rows="4" spellcheck="false" placeholder="https://client.com/event-photo-1.jpg">${esc(heroList(b.heroImages).join('\n'))}</textarea>
+    </div>
+
+    <div class="card section">
       <h3>Font</h3>
       <div class="grid4">
         <label class="inline">Font family<input class="input" id="fFont" maxlength="60" value="${esc(b.font || '')}" placeholder="Archivo" spellcheck="false"></label>
@@ -574,6 +581,7 @@ function bindEditor() {
   field('#fWa', (v) => { draft.brand.whatsapp = v; });
   field('#fContact', (v) => { draft.brand.contactUrl = v; });
   field('#fDisc', (v) => { draft.brand.disclaimer = v; });
+  field('#fHeroImgs', (v) => { draft.brand.heroImages = heroList(v).join(','); });
   field('#fFont', (v) => { draft.brand.font = v; });
   field('#fFontUrl', (v) => { draft.brand.fontUrl = v; });
 
@@ -787,7 +795,7 @@ function renderReport() {
   const r = lastReport;
   const all = $('#impAll');
   if (all) all.disabled = !r;
-  if (!r) { reportLists = { names: [], tags: [], logos: [], fonts: [] }; out.innerHTML = ''; return; }
+  if (!r) { reportLists = { names: [], tags: [], logos: [], fonts: [], imgs: [] }; out.innerHTML = ''; return; }
 
   const names = (r.nameCandidates || []).filter((c) => c && c.value).slice(0, 6);
   const tags = (r.taglineCandidates || []).filter((c) => c && c.value).slice(0, 5);
@@ -796,8 +804,9 @@ function renderReport() {
   const colors = (r.colors || []).filter((c) => c && hex(c.hex)).slice(0, 12);
   const sug = r.suggestedColors || {};
   const fonts = (r.fonts || []).filter((f) => f && f.name).slice(0, 6);
+  const imgs = (r.imageCandidates || []).filter((c) => c && /^https:\/\//i.test(c.url || '')).slice(0, 10);
   const sources = (r.sources || []).map((s) => s && s.from).filter(Boolean).slice(0, 6);
-  reportLists = { names, tags, logos, fonts };
+  reportLists = { names, tags, logos, fonts, imgs };
 
   out.innerHTML = `
     <div class="impsec">
@@ -819,6 +828,13 @@ function renderReport() {
       <div class="imphead"><b>Logo candidates</b><span class="small muted">click one to download it</span></div>
       ${logos.length ? `<div class="logogrid">${logos.map((c, i) => `<button class="logocand" type="button" data-logo="${i}" title="${esc(c.from || '')} ${esc(c.url)}"><img src="${esc(c.url)}" alt="" loading="lazy" referrerpolicy="no-referrer"></button>`).join('')}</div>`
         : '<p class="small muted" style="margin:0">No logo images found — upload one in the Logos section.</p>'}
+    </div>
+
+    <div class="impsec">
+      <div class="imphead"><b>Event photos</b><span class="small muted">click up to 5 for the landing mosaic</span></div>
+      ${imgs.length ? `<div class="logogrid">${imgs.map((c, i) => `<button class="logocand" type="button" data-heroimg="${i}" title="${esc(c.from || '')} ${esc(c.url)}"><img src="${esc(c.url)}" alt="" loading="lazy" referrerpolicy="no-referrer"></button>`).join('')}</div>`
+        : '<p class="small muted" style="margin:0">No event photos found.</p>'}
+      ${heroList(draft.brand.heroImages).length ? `<p class="small muted" style="margin:0">Selected: ${heroList(draft.brand.heroImages).length}/5</p>` : ''}
     </div>
 
     <div class="impsec">
@@ -877,6 +893,23 @@ function bindReport() {
       if (el) el.value = c.value;
       markDirty();
       updatePreview();
+    };
+  });
+  $$('#edImpRes [data-heroimg]').forEach((b) => {
+    b.onclick = () => {
+      const c = reportLists.imgs[Number(b.dataset.heroimg)];
+      if (!c || !/^https:\/\//i.test(c.url || '')) return;
+      const list = heroList(draft.brand.heroImages);
+      if (list.includes(c.url)) { toast('That photo is already in the hero images'); return; }
+      if (list.length >= 5) { toast('Up to 5 hero images — remove one first', 4000); return; }
+      list.push(c.url);
+      draft.brand.heroImages = list.join(',');
+      const ta = $('#fHeroImgs');
+      if (ta) ta.value = list.join('\n');
+      markDirty();
+      updatePreview();
+      renderReport();
+      toast(`Hero image ${list.length}/5 added`);
     };
   });
   $$('#edImpRes [data-logo]').forEach((b) => { b.onclick = () => pickLogo(Number(b.dataset.logo)); });

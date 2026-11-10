@@ -100,8 +100,17 @@
   var credit = B.disclaimer || 'Servis disediakan oleh JohorStudio.com';
   var creditHtml = 'Servis disediakan oleh <a href="https://johorstudio.com" target="_blank" rel="noopener" data-platform-credit>JohorStudio.com</a>';
   if (credit.indexOf('JohorStudio.com') === -1) creditHtml = credit;
+  // Footer: never wipe the footer's innerHTML — the pages still use elements inside it (#yr, links).
+  // Hide the platform-only lines (company no., address, admin links) and append the credit instead.
   document.querySelectorAll('footer.site, .site-footer, #sitefooter').forEach(function (f) {
-    f.innerHTML = '<span style="opacity:.85">' + creditHtml + '</span>';
+    Array.prototype.forEach.call(f.querySelectorAll('.wrap > div, .wrap > p, .foot-links'), function (el) {
+      if (!el.hasAttribute('data-platform-credit-block')) el.hidden = true;
+    });
+    var block = document.createElement('div');
+    block.setAttribute('data-platform-credit-block', '1');
+    block.setAttribute('style', 'opacity:.85');
+    block.innerHTML = creditHtml;
+    f.appendChild(block);
   });
   // The gallery footer holds the WhatsApp link; keep it and append the credit.
   document.querySelectorAll('.gfoot').forEach(function (f) {
@@ -144,9 +153,11 @@
     }).observe(document.head, { childList: true, subtree: true, characterData: true });
   } catch (e) { /* ignore */ }
 
-  // ---- the JohorStudio photo mosaic belongs to the platform only ----
+  // ---- the JohorStudio photo mosaic belongs to the platform only; a tenant can bring its own photos ----
+  var heroImages = (B.heroImages && B.heroImages.length) ? B.heroImages : [];
   if (B.kind === 'tenant') {
-    document.querySelectorAll('.mosaic').forEach(function (el) { el.hidden = true; });
+    if (!heroImages.length) document.querySelectorAll('.mosaic').forEach(function (el) { el.hidden = true; });
+    else document.querySelectorAll('.mosaic').forEach(function (el) { el.setAttribute('aria-label', NAME + ' event photos'); });
   }
 
   // ---- optional hero copy from the brand ----

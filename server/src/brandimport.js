@@ -241,6 +241,38 @@ function logoCandidates(html, baseUrl) {
   return out;
 }
 
+/** Event/hero photos from the client's site, for the tenant landing mosaic (up to 5 are used). */
+export function imageCandidates(html, baseUrl, logos = []) {
+  const out = [];
+  const seen = new Set((logos || []).map((l) => l.url));
+  const add = (url, from) => {
+    const abs = ABS(baseUrl, decode(url));
+    if (!abs || !/^https:\/\//i.test(abs) || seen.has(abs)) return;
+    if (!/\.(jpe?g|png|webp|avif)(\?|$)/i.test(abs)) return;
+    seen.add(abs);
+    out.push({ url: abs, from });
+  };
+  const imgRe = /<img\b[^>]*>/gi;
+  let m, n = 0;
+  while ((m = imgRe.exec(html)) && n < 800) {
+    n++;
+    const tag = m[0];
+    const src = /(?:src|data-src|data-lazy-src)\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1];
+    if (!src) continue;
+    const w = Number(/width\s*=\s*["']?(\d+)/i.exec(tag)?.[1] || 0);
+    const h = Number(/height\s*=\s*["']?(\d+)/i.exec(tag)?.[1] || 0);
+    const cls = /class\s*=\s*["']([^"']*)["']/i.exec(tag)?.[1] || '';
+    const heroish = /hero|slide|banner|cover|gallery|portfolio|event|showcase/i.test(`${cls} ${src}`);
+    if ((w >= 700 || h >= 700 || heroish)) add(src, `img${w ? ` ${w}x${h}` : ''}${heroish ? ' (hero/gallery)' : ''}`);
+    if (out.length >= 10) break;
+  }
+  for (const bg of html.matchAll(/background(?:-image)?\s*:\s*[^;{}"']{0,40}?url\(\s*(['"]?)([^)'"]+)\1\s*\)/gi)) {
+    add(bg[2], 'css background');
+    if (out.length >= 10) break;
+  }
+  return out.slice(0, 8);
+}
+
 // ---------- colours ----------
 function rgbToHex(r, g, b) {
   const f = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
@@ -455,6 +487,7 @@ export async function extractBrand(siteUrl) {
   sources.push({ field: 'name', from: 'JSON-LD organization / meta application-name / og:site_name / logo alt / title' });
 
   const logos = logoCandidates(html, base);
+  const images = imageCandidates(html, base, logos);
   // The logo carries the real brand colours; sample the first PNG/SVG candidate we can decode.
   let logoColours = [];
   let logoPixelSource = null;
@@ -549,6 +582,7 @@ export async function extractBrand(siteUrl) {
     ogImage,
     favicon: favIcon,
     logoCandidates: logos,
+    imageCandidates: images,
     logoColours,
     logoPixelSource,
     themeColor,
