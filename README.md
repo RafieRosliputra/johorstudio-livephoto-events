@@ -37,7 +37,8 @@ The same app and database serve every client brand: the brand is chosen from the
 - Server injects `:root` CSS variables + `window.__BRAND` into `<head>`; `public/js/brand.js` replaces the visible
   JohorStudio text/logo/contact links and appends the footer credit "Servis disediakan oleh JohorStudio.com".
 - `/admin/organizers` (Access-protected) creates/edits/toggles organiser brands, uploads logos and can read a client
-  website to suggest colours/logo/fonts (`src/brandimport.js`).
+  website to suggest name/slogan/logo/fonts; brand colours are sampled from the **logo pixels** (PNG/SVG, zero-dep)
+  because a site's CSS is usually framework boilerplate (`src/brandimport.js`).
 - Events carry `organizer_id`; a tenant host only serves its own events (gallery, QR, download, uploads, sessions).
 - Env: `ADMIN_HOST`, `PLATFORM_HOSTS`, `TENANT_ZONE`, `APEX_MODE`, `BRANDS_DIR`, `TENANT_DISCLAIMER`.
 - Deploy: one wildcard DNS record + one tunnel public hostname (`*.ccam.my`) once; on/off is then a status switch in the admin.

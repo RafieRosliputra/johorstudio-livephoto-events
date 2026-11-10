@@ -1050,6 +1050,7 @@ A('POST', '/organizers/:id/import', async (req, res, { params }) => {
   const next = {
     ...cur, custom: true, updatedAt: Date.now(),
     name: cur.name || report.name || org.name,
+    tagline: cur.tagline || report.tagline || '',
     website: cur.website || report.finalUrl,
     colorPrimary: cur.colorPrimary || c.primary || '',
     colorAccent: cur.colorAccent || c.accent || '',

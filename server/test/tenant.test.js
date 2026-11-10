@@ -199,6 +199,10 @@ test('admin paths are blocked on tenant hosts', async () => {
   const org = await call('GET', '/organizers', { host: 'passion.ccam.my' });
   assert.equal(org.status, 302);
   assert.equal(org.headers.location, 'https://live.johorstudio.com/admin/organizers');
+  // the EVENT ORGANIZER page lives under /admin so Cloudflare Access covers it
+  const orgPage = await call('GET', '/admin/organizers', { host: 'passion.ccam.my' });
+  assert.equal(orgPage.status, 302);
+  assert.equal(orgPage.headers.location, 'https://live.johorstudio.com/admin/organizers');
   // raw admin file names are never served (Cloudflare Access only covers /admin)
   const raw = await call('GET', '/admin.html', { host: 'live.johorstudio.com' });
   assert.equal(raw.status, 302);
